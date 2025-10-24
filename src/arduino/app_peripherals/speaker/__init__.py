@@ -352,10 +352,15 @@ class Speaker:
                     break
         logger.debug("Playback queue cleared.")
 
-    def start(self):
+    def start(self, notify_if_started: bool = True):
         """Start the spaker stream by opening the PCM device."""
         if self._is_reproducing.is_set():
-            raise RuntimeError("Spaker is already reproducing audio, cannot start again.")
+            if notify_if_started:
+                raise RuntimeError("Spaker is already reproducing audio, cannot start again.")
+            else:
+                logger.debug("Spaker is already reproducing audio, start() call ignored.")
+                return
+
         self._clear_queue()
         self._open_pcm()
         self._is_reproducing.set()
@@ -367,7 +372,7 @@ class Speaker:
     def stop(self):
         """Close the PCM device if open."""
         if not self._is_reproducing.is_set():
-            logger.warning("Spaker is not recording, nothing to stop.")
+            logger.debug("Spaker is not recording, nothing to stop.")
             return
 
         # Stop the playback thread
