@@ -1,6 +1,6 @@
 # Sound Generator Brick
 
-Play sounds and melodies
+Play sounds and melodies 
 
 ## Code example and usage
 
@@ -35,7 +35,7 @@ waveform can be customized to change effect. For example, for a retro-gaming sou
 player = SoundGenerator(wave_form="square")
 ```
 
-instead, to have a more "rock" like sound, you can add effect
+instead, to have a more "rock" like sound, you can add effects like:
 
 ```python
 player = SoundGenerator(sound_effects=[SoundEffect.adsr(), SoundEffect.overdrive(drive=180.0), SoundEffect.chorus(depth_ms=15, rate_hz=0.2, mix=0.4)])

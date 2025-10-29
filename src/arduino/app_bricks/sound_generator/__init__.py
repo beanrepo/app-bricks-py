@@ -7,6 +7,7 @@ from arduino.app_peripherals.speaker import Speaker
 import threading
 from typing import Iterable
 import numpy as np
+import time
 
 from .effects import *
 from .loaders import ABCNotationLoader
@@ -73,13 +74,14 @@ class SoundGeneratorStreamer:
                 signal (e.g., [SoundEffect.adsr()]). See SoundEffect class for available effects.
         """
 
-        self._wave_gen = WaveGenerator(sample_rate=self.SAMPLE_RATE, wave_form=wave_form)
+        self._cfg_lock = threading.Lock()
+        self._init_wave_generator(wave_form)
+
         self._bpm = bpm
         self.time_signature = time_signature
         self._master_volume = master_volume
         self._sound_effects = sound_effects
 
-        self._cfg_lock = threading.Lock()
         self._notes = {}
         for octave in range(octaves):
             notes = self._fill_node_frequencies(octave)
@@ -90,6 +92,19 @@ class SoundGeneratorStreamer:
 
     def stop(self):
         pass
+
+    def _init_wave_generator(self, wave_form: str):
+        with self._cfg_lock:
+            self._wave_gen = WaveGenerator(sample_rate=self.SAMPLE_RATE, wave_form=wave_form)
+
+    def set_wave_form(self, wave_form: str):
+        """
+        Set the wave form type for sound generation.
+        Args:
+            wave_form (str): The type of wave form to generate. Supported values
+                are "sine", "square", "triangle" and "sawtooth".
+        """
+        self._init_wave_generator(wave_form)
 
     def set_master_volume(self, volume: float):
         """
@@ -368,14 +383,14 @@ class SoundGeneratorStreamer:
             data = self._apply_sound_effects(data, frequency)
             return self._to_bytes(data)
 
-    def play_abc(self, abc_string: str, volume: float = None) -> Iterable[bytes]:
+    def play_abc(self, abc_string: str, volume: float = None) -> Iterable[tuple[bytes, float]]:
         """
         Play a sequence of musical notes defined in ABC notation.
         Args:
             abc_string (str): ABC notation string defining the sequence of notes.
             volume (float, optional): Volume level (0.0 to 1.0). If None, uses master volume.
         Returns:
-            Iterable[bytes]: An iterable yielding the audio blocks of the played notes (float32).
+            Iterable[tuple[bytes, float]]: An iterable yielding the audio blocks of the played notes (float32) and its duration.
         """
         if not abc_string or abc_string.strip() == "":
             return
@@ -387,7 +402,7 @@ class SoundGeneratorStreamer:
             if frequency is not None and frequency >= 0.0:
                 data = self._wave_gen.generate_block(float(frequency), duration, volume)
                 data = self._apply_sound_effects(data, frequency)
-                yield self._to_bytes(data)
+                yield (self._to_bytes(data), duration)
 
 
 @brick
@@ -424,20 +439,26 @@ class SoundGenerator(SoundGeneratorStreamer):
             sound_effects=sound_effects,
         )
 
+        self._started = threading.Event()
         if output_device is None:
-            self._self_created_device = True
+            self.external_speaker = False
             self._output_device = Speaker(sample_rate=self.SAMPLE_RATE, format="FLOAT_LE")
+            self.start()
         else:
-            self._self_created_device = False
+            self.external_speaker = True
             self._output_device = output_device
 
     def start(self):
-        if self._self_created_device:
+        if self._started.is_set():
+            return
+        if self.external_speaker == False:
             self._output_device.start(notify_if_started=False)
+        self._started.set()
 
     def stop(self):
-        if self._self_created_device:
+        if self.external_speaker == False:
             self._output_device.stop()
+        self._started.clear()
 
     def set_master_volume(self, volume: float):
         """
@@ -508,15 +529,20 @@ class SoundGenerator(SoundGeneratorStreamer):
         data = super().play_tone(note, duration, volume)
         self._output_device.play(data, block_on_queue=False)
 
-    def play_abc(self, abc_string: str, volume: float = None):
+    def play_abc(self, abc_string: str, volume: float = None, wait_completion: bool = False):
         """
         Play a sequence of musical notes defined in ABC notation.
         Args:
             abc_string (str): ABC notation string defining the sequence of notes.
             volume (float, optional): Volume level (0.0 to 1.0). If None, uses master volume.
+            wait_completion (bool): If True, block until the entire sequence has been played.
         """
         if not abc_string or abc_string.strip() == "":
             return
         player = super().play_abc(abc_string, volume)
-        for data in player:
-            self._output_device.play(data, block_on_queue=False)
+        overall_duration = 0.0
+        for data, duration in player:
+            self._output_device.play(data, block_on_queue=True)
+            overall_duration += duration
+        if wait_completion:
+            time.sleep(overall_duration)

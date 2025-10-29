@@ -7,7 +7,7 @@ import numpy as np
 
 class SoundEffect:
     @staticmethod
-    def overdrive(drive: float = 1.0) -> np.ndarray:
+    def overdrive(drive: float = 100.0) -> np.ndarray:
         """
         Apply overdrive effect to the audio signal.
         Args:
@@ -29,12 +29,11 @@ class SoundEffect:
         return SoundEffectOverdrive(drive)
 
     @staticmethod
-    def chorus(fs: int = 16000, depth_ms=10, rate_hz: float = 0.25, mix: float = 0.5) -> np.ndarray:
+    def chorus(depth_ms=10, rate_hz: float = 0.25, mix: float = 0.5) -> np.ndarray:
         """
         Apply chorus effect to the audio signal.
         Args:
             signal (np.ndarray): Input audio signal.
-            fs (int): Sampling frequency in Hz.
             depth_ms (float): Depth of the chorus effect in milliseconds.
             rate_hz (float): Rate of the LFO in Hz.
             mix (float): Mix ratio between dry and wet signals (0.0 to 1.0).
@@ -43,8 +42,8 @@ class SoundEffect:
         """
 
         class SoundEffectChorus:
-            def __init__(self, fs: int = 16000, depth_ms: int = 10, rate_hz: float = 0.25, mix: float = 0.5):
-                self.fs = fs
+            def __init__(self, depth_ms: int = 10, rate_hz: float = 0.25, mix: float = 0.5):
+                self.fs = 16000  # sample rate
                 self.depth_ms = depth_ms
                 self.rate_hz = rate_hz
                 self.mix = mix
@@ -67,14 +66,13 @@ class SoundEffect:
                 # mix dry/wet
                 return ((1 - self.mix) * signal + self.mix * out).astype(np.float32)
 
-        return SoundEffectChorus(fs, depth_ms, rate_hz, mix)
+        return SoundEffectChorus(depth_ms, rate_hz, mix)
 
     @staticmethod
     def adsr(attack: float = 0.015, decay: float = 0.2, sustain: float = 0.5, release: float = 0.35):
         """
         Apply ADSR (attack/decay/sustain/release) envelope to the audio signal.
         Args:
-            fs (int): Sampling frequency in Hz.
             attack (float): Attack time in seconds.
             decay (float): Decay time in seconds.
             sustain (float): Sustain level (0.0 to 1.0).
