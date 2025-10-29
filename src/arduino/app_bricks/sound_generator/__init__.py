@@ -255,7 +255,7 @@ class SoundGeneratorStreamer:
         # Format: "FLOAT_LE" -> (ALSA: "PCM_FORMAT_FLOAT_LE", np.float32),
         return signal.astype(np.float32).tobytes()
 
-    def play_polyphonic(self, notes: list[list[tuple[str, float]]], as_tone: bool = False, volume: float = None) -> bytes:
+    def play_polyphonic(self, notes: list[list[tuple[str, float]]], as_tone: bool = False, volume: float = None) -> tuple[bytes, float]:
         """
         Play multiple sequences of musical notes simultaneously (poliphony).
         It is possible to play multi track music by providing a list of sequences,
@@ -266,7 +266,7 @@ class SoundGeneratorStreamer:
             as_tone (bool): If True, play as tones, considering duration in seconds
             volume (float, optional): Volume level (0.0 to 1.0). If None, uses master volume.
         Returns:
-            bytes: The audio block of the mixed sequences (float32).
+            tuple[bytes, float]: The audio block of the mixed sequences (float32) and its duration in seconds.
         """
         if volume is None:
             volume = self._master_volume
@@ -274,9 +274,12 @@ class SoundGeneratorStreamer:
         # Multi track mixing
         sequences_data = []
         base_frequency = None
+        max_duration = 0.0
         for sequence in notes:
             sequence_waves = []
+            sequence_duration = 0.0
             for note, duration in sequence:
+                sequence_duration += duration
                 frequency = self._get_note(note)
                 if frequency >= 0.0:
                     if base_frequency is None:
@@ -287,9 +290,12 @@ class SoundGeneratorStreamer:
                     sequence_waves.append(data)
                 else:
                     continue
+
             if len(sequence_waves) > 0:
                 single_track_data = np.concatenate(sequence_waves)
                 sequences_data.append(single_track_data)
+                if sequence_duration > max_duration:
+                    max_duration = sequence_duration
 
         if len(sequences_data) == 0:
             return
@@ -308,8 +314,8 @@ class SoundGeneratorStreamer:
         mixed /= np.max(np.abs(mixed))  # Normalize to prevent clipping
         blk = mixed.astype(np.float32)
         blk = self._apply_sound_effects(blk, base_frequency)
-        return self._to_bytes(blk)
-
+        return (self._to_bytes(blk), max_duration)
+    
     def play_chord(self, notes: list[str], note_duration: float | str = 1 / 4, volume: float = None) -> bytes:
         """
         Play a chord consisting of multiple musical notes simultaneously for a specified duration and volume.
@@ -476,7 +482,7 @@ class SoundGenerator(SoundGeneratorStreamer):
         """
         super().set_effects(effects)
 
-    def play_polyphonic(self, notes: list[list[tuple[str, float]]], as_tone: bool = False, volume: float = None):
+    def play_polyphonic(self, notes: list[list[tuple[str, float]]], as_tone: bool = False, volume: float = None, wait_completion: bool = False):
         """
         Play multiple sequences of musical notes simultaneously (poliphony).
         It is possible to play multi track music by providing a list of sequences,
@@ -486,12 +492,12 @@ class SoundGenerator(SoundGeneratorStreamer):
             notes (list[list[tuple[str, float]]]): List of sequences, each sequence is a list of tuples (note, duration).
             as_tone (bool): If True, play as tones, considering duration in seconds
             volume (float, optional): Volume level (0.0 to 1.0). If None, uses master volume.
+            wait_completion (bool): If True, block until the entire sequence has been played.
         """
-        blk = super().play_polyphonic(notes, as_tone, volume)
-        try:
-            self._output_device.play(blk, block_on_queue=False)
-        except Exception as e:
-            print(f"Error playing multiple sequences: {e}")
+        blk, duration = super().play_polyphonic(notes, as_tone, volume)
+        self._output_device.play(blk, block_on_queue=False)
+        if wait_completion and duration > 0.0:
+            time.sleep(duration)
 
     def play_chord(self, notes: list[str], note_duration: float | str = 1 / 4, volume: float = None):
         """
@@ -502,10 +508,7 @@ class SoundGenerator(SoundGeneratorStreamer):
             volume (float, optional): Volume level (0.0 to 1.0). If None, uses master volume.
         """
         blk = super().play_chord(notes, note_duration, volume)
-        try:
-            self._output_device.play(blk, block_on_queue=False)
-        except Exception as e:
-            print(f"Error playing chord {notes}: {e}")
+        self._output_device.play(blk, block_on_queue=False)
 
     def play(self, note: str, note_duration: float | str = 1 / 4, volume: float = None):
         """
