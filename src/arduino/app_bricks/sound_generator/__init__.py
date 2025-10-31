@@ -2,13 +2,14 @@
 #
 # SPDX-License-Identifier: MPL-2.0
 
-from arduino.app_utils import WaveGenerator, brick
+from arduino.app_utils import brick
 from arduino.app_peripherals.speaker import Speaker
 import threading
 from typing import Iterable
 import numpy as np
 import time
 
+from .generator import WaveSamplesBuilder
 from .effects import *
 from .loaders import ABCNotationLoader
 
@@ -95,7 +96,7 @@ class SoundGeneratorStreamer:
 
     def _init_wave_generator(self, wave_form: str):
         with self._cfg_lock:
-            self._wave_gen = WaveGenerator(sample_rate=self.SAMPLE_RATE, wave_form=wave_form)
+            self._wave_gen = WaveSamplesBuilder(sample_rate=self.SAMPLE_RATE, wave_form=wave_form)
 
     def set_wave_form(self, wave_form: str):
         """
@@ -315,7 +316,7 @@ class SoundGeneratorStreamer:
         blk = mixed.astype(np.float32)
         blk = self._apply_sound_effects(blk, base_frequency)
         return (self._to_bytes(blk), max_duration)
-    
+
     def play_chord(self, notes: list[str], note_duration: float | str = 1 / 4, volume: float = None) -> bytes:
         """
         Play a chord consisting of multiple musical notes simultaneously for a specified duration and volume.

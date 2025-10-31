@@ -43,7 +43,7 @@ tune_sequence = [
 
 # Play as a retro-game sound
 player.set_wave_form("square")
-player.set_effects([SoundEffect.adsr()]) # For a more synththetic sound, add SoundEffect.bitcrusher() effect
+player.set_effects([SoundEffect.adsr()])  # For a more synththetic sound, add SoundEffect.bitcrusher() effect
 for note, duration in tune_sequence:
     player.play_tone(note, duration)
 
