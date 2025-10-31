@@ -450,7 +450,6 @@ class SoundGenerator(SoundGeneratorStreamer):
         if output_device is None:
             self.external_speaker = False
             self._output_device = Speaker(sample_rate=self.SAMPLE_RATE, format="FLOAT_LE")
-            self.start()
         else:
             self.external_speaker = True
             self._output_device = output_device
