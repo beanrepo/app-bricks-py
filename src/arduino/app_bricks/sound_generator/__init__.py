@@ -8,6 +8,7 @@ import threading
 from typing import Iterable
 import numpy as np
 import time
+from pathlib import Path
 
 from .generator import WaveSamplesBuilder
 from .effects import *
@@ -411,6 +412,27 @@ class SoundGeneratorStreamer:
                 data = self._apply_sound_effects(data, frequency)
                 yield (self._to_bytes(data), duration)
 
+    def play_wav(self, wav_file: str) -> tuple[bytes, float]:
+        """
+        Play a WAV audio data block.
+        Args:
+            wav_file (str): The WAV audio file path.
+        Returns:
+            tuple[bytes, float]: The audio block of the WAV file (float32) and its duration in seconds.
+        """
+        import wave
+
+        file_path = Path(wav_file)
+        if not file_path.exists() or not file_path.is_file():
+            raise FileNotFoundError(f"WAV file not found: {wav_file}")
+
+        with wave.open(wav_file, "rb") as wav:
+            # Read all frames (raw PCM data)
+            duration = wav.getnframes() / wav.getframerate()
+            return (wav.readframes(wav.getnframes()), duration)
+
+        return (None, None)
+
 
 @brick
 class SoundGenerator(SoundGeneratorStreamer):
@@ -482,7 +504,7 @@ class SoundGenerator(SoundGeneratorStreamer):
         """
         super().set_effects(effects)
 
-    def play_polyphonic(self, notes: list[list[tuple[str, float]]], as_tone: bool = False, volume: float = None, wait_completion: bool = False):
+    def play_polyphonic(self, notes: list[list[tuple[str, float]]], as_tone: bool = False, volume: float = None, block: bool = False):
         """
         Play multiple sequences of musical notes simultaneously (poliphony).
         It is possible to play multi track music by providing a list of sequences,
@@ -492,53 +514,66 @@ class SoundGenerator(SoundGeneratorStreamer):
             notes (list[list[tuple[str, float]]]): List of sequences, each sequence is a list of tuples (note, duration).
             as_tone (bool): If True, play as tones, considering duration in seconds
             volume (float, optional): Volume level (0.0 to 1.0). If None, uses master volume.
-            wait_completion (bool): If True, block until the entire sequence has been played.
+            block (bool): If True, block until the entire sequence has been played.
         """
         blk, duration = super().play_polyphonic(notes, as_tone, volume)
         self._output_device.play(blk, block_on_queue=False)
-        if wait_completion and duration > 0.0:
+        if block and duration > 0.0:
             time.sleep(duration)
 
-    def play_chord(self, notes: list[str], note_duration: float | str = 1 / 4, volume: float = None):
+    def play_chord(self, notes: list[str], note_duration: float | str = 1 / 4, volume: float = None, block: bool = False):
         """
         Play a chord consisting of multiple musical notes simultaneously for a specified duration and volume.
         Args:
             notes (list[str]): List of musical notes to play (e.g., ['A4', 'C#5', 'E5']).
             note_duration (float | str): Duration of the chord as a float (like 1/4, 1/8) or a symbol ('W', 'H', 'Q', etc.).
             volume (float, optional): Volume level (0.0 to 1.0). If None, uses master volume.
+            block (bool): If True, block until the entire chord has been played.
         """
         blk = super().play_chord(notes, note_duration, volume)
         self._output_device.play(blk, block_on_queue=False)
+        if block:
+            duration = self._note_duration(note_duration)
+            if duration > 0.0:
+                time.sleep(duration)
 
-    def play(self, note: str, note_duration: float | str = 1 / 4, volume: float = None):
+    def play(self, note: str, note_duration: float | str = 1 / 4, volume: float = None, block: bool = False):
         """
         Play a musical note for a specified duration and volume.
         Args:
             note (str): The musical note to play (e.g., 'A4', 'C#5', 'REST').
             note_duration (float | str): Duration of the note as a float (like 1/4, 1/8) or a symbol ('W', 'H', 'Q', etc.).
             volume (float, optional): Volume level (0.0 to 1.0). If None, uses master volume.
+            block (bool): If True, block until the entire note has been played.
         """
         data = super().play(note, note_duration, volume)
         self._output_device.play(data, block_on_queue=False)
+        if block:
+            duration = self._note_duration(note_duration)
+            if duration > 0.0:
+                time.sleep(duration)
 
-    def play_tone(self, note: str, duration: float = 0.25, volume: float = None):
+    def play_tone(self, note: str, duration: float = 0.25, volume: float = None, block: bool = False):
         """
         Play a musical note for a specified duration and volume.
         Args:
             note (str): The musical note to play (e.g., 'A4', 'C#5', 'REST').
             duration (float): Duration of the note as a float in seconds.
             volume (float, optional): Volume level (0.0 to 1.0). If None, uses master volume.
+            block (bool): If True, block until the entire note has been played.
         """
         data = super().play_tone(note, duration, volume)
         self._output_device.play(data, block_on_queue=False)
+        if block and duration > 0.0:
+            time.sleep(duration)
 
-    def play_abc(self, abc_string: str, volume: float = None, wait_completion: bool = False):
+    def play_abc(self, abc_string: str, volume: float = None, block: bool = False):
         """
         Play a sequence of musical notes defined in ABC notation.
         Args:
             abc_string (str): ABC notation string defining the sequence of notes.
             volume (float, optional): Volume level (0.0 to 1.0). If None, uses master volume.
-            wait_completion (bool): If True, block until the entire sequence has been played.
+            block (bool): If True, block until the entire sequence has been played.
         """
         if not abc_string or abc_string.strip() == "":
             return
@@ -547,8 +582,14 @@ class SoundGenerator(SoundGeneratorStreamer):
         for data, duration in player:
             self._output_device.play(data, block_on_queue=True)
             overall_duration += duration
-        if wait_completion:
+        if block:
             time.sleep(overall_duration)
+
+    def play_wav(self, wav_file: str, volume: float = None, block: bool = False):
+        to_play, duration = super().play_wav(wav_file)
+        self._output_device.play(to_play, block_on_queue=False)
+        if block and duration > 0.0:
+            time.sleep(duration)
 
     def clear_playback_queue(self):
         """
