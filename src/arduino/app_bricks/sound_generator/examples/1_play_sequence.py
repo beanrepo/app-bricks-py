@@ -46,8 +46,10 @@ fur_elise = [
     ("A4", 1),
 ]
 
+
 def user_lp():
     for note, duration in fur_elise:
         player.play(note, duration)
+
 
 App.run(user_loop=user_lp)

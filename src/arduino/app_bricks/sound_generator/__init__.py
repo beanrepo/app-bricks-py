@@ -549,3 +549,9 @@ class SoundGenerator(SoundGeneratorStreamer):
             overall_duration += duration
         if wait_completion:
             time.sleep(overall_duration)
+
+    def clear_playback_queue(self):
+        """
+        Clear the playback queue of the output device.
+        """
+        self._output_device.clear_playback_queue()

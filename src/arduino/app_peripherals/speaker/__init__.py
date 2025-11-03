@@ -504,3 +504,15 @@ class Speaker:
         except queue.Full:
             # logger.warning("Playback queue is full, dropping oldest data.")
             self._playing_queue.get_nowait()
+
+    def is_reproducing(self) -> bool:
+        """Check if the speaker is currently reproducing audio.
+
+        Returns:
+            bool: True if reproducing, False otherwise.
+        """
+        return self._is_reproducing.is_set()
+
+    def clear_playback_queue(self):
+        """Clear the playback queue."""
+        self._clear_queue()
