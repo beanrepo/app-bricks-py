@@ -9,6 +9,7 @@ from typing import Iterable
 import numpy as np
 import time
 from pathlib import Path
+from collections import OrderedDict
 
 from .generator import WaveSamplesBuilder
 from .effects import *
@@ -426,10 +427,20 @@ class SoundGeneratorStreamer:
         if not file_path.exists() or not file_path.is_file():
             raise FileNotFoundError(f"WAV file not found: {wav_file}")
 
+        wav_cache = OrderedDict()
+
+        if wav_file in wav_cache:
+            return wav_cache[wav_file]
+
         with wave.open(wav_file, "rb") as wav:
             # Read all frames (raw PCM data)
             duration = wav.getnframes() / wav.getframerate()
-            return (wav.readframes(wav.getnframes()), duration)
+            wav_data = wav.readframes(wav.getnframes())
+            if len(wav_cache) < 250 * 1024:  # 250 KB cache limit
+                wav_cache[wav_file] = (wav_data, duration)
+            if len(wav_cache) > 10:
+                wav_cache.popitem(last=False)
+            return (wav_data, duration)
 
         return (None, None)
 
@@ -585,7 +596,13 @@ class SoundGenerator(SoundGeneratorStreamer):
         if block:
             time.sleep(overall_duration)
 
-    def play_wav(self, wav_file: str, volume: float = None, block: bool = False):
+    def play_wav(self, wav_file: str, block: bool = False):
+        """
+        Play a WAV audio data block.
+        Args:
+            wav_file (str): The WAV audio file path.
+            block (bool): If True, block until the entire WAV file has been played.
+        """
         to_play, duration = super().play_wav(wav_file)
         self._output_device.play(to_play, block_on_queue=False)
         if block and duration > 0.0:
