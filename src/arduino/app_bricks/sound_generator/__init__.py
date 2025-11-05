@@ -16,6 +16,29 @@ from .effects import *
 from .loaders import ABCNotationLoader
 
 
+class LRUDict(OrderedDict):
+    """A dictionary-like object with a fixed size that evicts the least recently used items."""
+
+    def __init__(self, maxsize=128, *args, **kwargs):
+        self.maxsize = maxsize
+        super().__init__(*args, **kwargs)
+
+    def __getitem__(self, key):
+        value = super().__getitem__(key)
+        self.move_to_end(key)
+        return value
+
+    def __setitem__(self, key, value):
+        if key in self:
+            self.move_to_end(key)
+
+        super().__setitem__(key, value)
+
+        if len(self) > self.maxsize:
+            # Evict the least recently used item (the first item)
+            self.popitem(last=False)
+
+
 @brick
 class SoundGeneratorStreamer:
     SAMPLE_RATE = 16000
@@ -89,6 +112,8 @@ class SoundGeneratorStreamer:
         for octave in range(octaves):
             notes = self._fill_node_frequencies(octave)
             self._notes.update(notes)
+
+        self._wav_cache = LRUDict(maxsize=10)
 
     def start(self):
         pass
@@ -427,19 +452,15 @@ class SoundGeneratorStreamer:
         if not file_path.exists() or not file_path.is_file():
             raise FileNotFoundError(f"WAV file not found: {wav_file}")
 
-        wav_cache = OrderedDict()
-
-        if wav_file in wav_cache:
-            return wav_cache[wav_file]
+        if wav_file in self._wav_cache:
+            return self._wav_cache[wav_file]
 
         with wave.open(wav_file, "rb") as wav:
             # Read all frames (raw PCM data)
             duration = wav.getnframes() / wav.getframerate()
             wav_data = wav.readframes(wav.getnframes())
-            if len(wav_cache) < 250 * 1024:  # 250 KB cache limit
-                wav_cache[wav_file] = (wav_data, duration)
-            if len(wav_cache) > 10:
-                wav_cache.popitem(last=False)
+            if len(self._wav_cache) < 250 * 1024:  # 250 KB cache limit
+                self._wav_cache[wav_file] = (wav_data, duration)
             return (wav_data, duration)
 
         return (None, None)
