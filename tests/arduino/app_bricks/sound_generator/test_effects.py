@@ -2,7 +2,6 @@
 #
 # SPDX-License-Identifier: MPL-2.0
 
-import pytest
 from arduino.app_bricks.sound_generator.effects import SoundEffect
 from arduino.app_bricks.sound_generator import SoundGenerator
 from arduino.app_utils.audio import WaveGenerator

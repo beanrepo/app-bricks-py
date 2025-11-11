@@ -90,12 +90,13 @@ class SoundGeneratorStreamer:
     ):
         """Initialize the SoundGeneratorStreamer. Generates sound blocks for streaming, without internal playback.
         Args:
-            wave_form (str): The type of wave form to generate. Supported values
-                are "sine" (default), "square", "triangle" and "sawtooth".
             bpm (int): The tempo in beats per minute for note duration calculations.
-            master_volume (float): The master volume level (0.0 to 1.0).
+            time_signature (tuple): The time signature as (numerator, denominator).
             octaves (int): Number of octaves to generate notes for (starting from octave
                 0 up to octaves-1).
+            wave_form (str): The type of wave form to generate. Supported values
+                are "sine" (default), "square", "triangle" and "sawtooth".
+            master_volume (float): The master volume level (0.0 to 1.0).
             sound_effects (list, optional): List of sound effect instances to apply to the audio
                 signal (e.g., [SoundEffect.adsr()]). See SoundEffect class for available effects.
         """
@@ -258,6 +259,7 @@ class SoundGeneratorStreamer:
         Apply the configured sound effects to the audio signal.
         Args:
             signal (np.ndarray): Input audio signal.
+            frequency (float): Frequency of the note being played.
         Returns:
             np.ndarray: Processed audio signal with sound effects applied.
         """
@@ -312,7 +314,7 @@ class SoundGeneratorStreamer:
                 if frequency >= 0.0:
                     if base_frequency is None:
                         base_frequency = frequency
-                    if as_tone == False:
+                    if not as_tone:
                         duration = self._note_duration(duration)
                     data = self._wave_gen.generate_block(float(frequency), duration, volume)
                     sequence_waves.append(data)
@@ -489,6 +491,7 @@ class SoundGenerator(SoundGeneratorStreamer):
                 0 up to octaves-1).
             sound_effects (list, optional): List of sound effect instances to apply to the audio
                 signal (e.g., [SoundEffect.adsr()]). See SoundEffect class for available effects.
+            time_signature (tuple): The time signature as (numerator, denominator).
         """
 
         super().__init__(
@@ -511,12 +514,12 @@ class SoundGenerator(SoundGeneratorStreamer):
     def start(self):
         if self._started.is_set():
             return
-        if self.external_speaker == False:
+        if not self.external_speaker:
             self._output_device.start(notify_if_started=False)
         self._started.set()
 
     def stop(self):
-        if self.external_speaker == False:
+        if not self.external_speaker:
             self._output_device.stop()
         self._started.clear()
 

@@ -178,7 +178,7 @@ class SoundEffect:
                 """
                 Bitcrusher effect.
                 Args:
-                    bit_depth (int): Number of bits for quantization (1-16).
+                    bits (int): Bit depth for quantization (1-16).
                     reduction (int): Redeuction factor for downsampling (>=1).
                 """
                 self.bit_depth = np.clip(bits, 1, 16)
