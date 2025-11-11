@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: MPL-2.0
 
 from arduino.app_bricks.sound_generator.effects import SoundEffect
-from arduino.app_bricks.sound_generator import SoundGenerator, WaveSamplesBuilder
+from arduino.app_bricks.sound_generator import SoundGeneratorStreamer, WaveSamplesBuilder
 
 
 def test_adsr_effect():
@@ -56,7 +56,7 @@ def test_available_notes():
         ("B4", 0.25),
     ]
 
-    generator = SoundGenerator()
+    generator = SoundGeneratorStreamer()
     for note, duration in note_sequence:
         print(f"Testing note: {note}")
         frequency = generator._get_note(note)
