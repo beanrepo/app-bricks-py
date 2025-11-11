@@ -3,12 +3,11 @@
 # SPDX-License-Identifier: MPL-2.0
 
 from arduino.app_bricks.sound_generator.effects import SoundEffect
-from arduino.app_bricks.sound_generator import SoundGenerator
-from arduino.app_utils.audio import WaveGenerator
+from arduino.app_bricks.sound_generator import SoundGenerator, WaveSamplesBuilder
 
 
 def test_adsr_effect():
-    generator = WaveGenerator(sample_rate=16000, wave_form="square")
+    generator = WaveSamplesBuilder(sample_rate=16000, wave_form="square")
     adsr = SoundEffect.adsr()
     blk = generator.generate_block(440.0, 1 / 8, 1.0)  # Generate a block to initialize
     assert adsr is not None
