@@ -12,6 +12,7 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import SystemMessage
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.chat_history import InMemoryChatMessageHistory
+from langsmith import uuid7
 
 from arduino.app_utils import Logger, brick
 
@@ -79,7 +80,7 @@ class CloudLLM:
             timeout=self._timeout,
         )
         self._parser = StrOutputParser()
-        self._history_cfg = {"configurable": {"session_id": "default_session"}}
+        self._history_cfg = {"configurable": {"session_id": uuid7()}}
 
         core_chain = self._prompt | self._model | self._parser
         self._chain = RunnableWithMessageHistory(
