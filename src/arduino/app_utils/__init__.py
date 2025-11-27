@@ -14,6 +14,7 @@ from .logger import *
 from .ledmatrix import *
 from .slidingwindowbuffer import *
 from .userinput import *
+from .leds import *
 
 __all__ = [
     "App",
@@ -34,4 +35,5 @@ __all__ = [
     "SineGenerator",
     "SlidingWindowBuffer",
     "UserTextInput",
+    "Leds",
 ]

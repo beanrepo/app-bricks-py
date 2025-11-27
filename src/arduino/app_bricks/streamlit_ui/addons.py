@@ -31,7 +31,7 @@ def arduino_header(title: str):
 
     Additionally, custom components like `st.arduino_header()` are provided to streamline Arduino integration.
     """
-    svg_path = os.path.join(os.path.dirname(__file__), "assets", "RGB-Arduino-Logo_Color Inline Loop.svg")
+    svg_path = os.path.join(os.path.dirname(__file__), "assets", "RGB-Arduino-Logo-Color-Inline-Loop.svg")
     svg_path = os.path.abspath(svg_path)
     try:
         with open(svg_path, "r", encoding="utf-8") as f:
