@@ -310,6 +310,14 @@ class MIDIKeyboard:
 
         logger.info("MIDIKeyboard stopped")
 
+    def is_connected(self) -> bool:
+        """Check if MIDI device is still connected and running.
+
+        Returns:
+            True if device is connected and listening thread is alive
+        """
+        return self._is_running.is_set() and self._listener_thread and self._listener_thread.is_alive()
+
     def _listen_loop(self):
         """Main listener loop running in background thread."""
         logger.debug("MIDI listener loop started")
@@ -330,6 +338,11 @@ class MIDIKeyboard:
 
                 self._process_message(msg)
 
+            except (OSError, IOError) as e:
+                # Device disconnected
+                logger.error(f"MIDI device disconnected: {e}")
+                self._is_running.clear()
+                break
             except Exception as e:
                 logger.error(f"Error in MIDI listener loop: {e}")
                 time.sleep(0.1)
