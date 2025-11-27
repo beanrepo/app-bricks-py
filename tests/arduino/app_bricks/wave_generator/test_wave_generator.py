@@ -24,20 +24,28 @@ def mock_speaker(monkeypatch):
     """Mock Speaker to avoid hardware dependencies."""
 
     class FakeSpeaker:
-        def __init__(self, device=None, sample_rate=16000, channels=1, format="FLOAT_LE"):
+        # Class attributes (macros like real Speaker)
+        USB_SPEAKER_1 = "USB_SPEAKER_1"
+        USB_SPEAKER_2 = "USB_SPEAKER_2"
+
+        def __init__(self, device=None, sample_rate=16000, channels=1, format="FLOAT_LE", periodsize=None, queue_maxsize=100):
             self.device = device or "fake_device"
             self.sample_rate = sample_rate
             self.channels = channels
             self.format = format
+            self._periodsize = periodsize  # Support new periodsize parameter
             self._is_started = False
+            self._is_reproducing = threading.Event()  # Support lifecycle checks
             self._played_data = []
             self._mixer = FakeMixer()
 
         def start(self):
             self._is_started = True
+            self._is_reproducing.set()
 
         def stop(self):
             self._is_started = False
+            self._is_reproducing.clear()
 
         def play(self, data, block_on_queue=False):
             if self._is_started:

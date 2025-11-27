@@ -22,23 +22,33 @@ available_speakers = Speaker.list_usb_devices()
 print(f"Available USB speakers: {available_speakers}")
 
 # Create and configure a Speaker with specific parameters
+# For optimal real-time synthesis, align periodsize with WaveGenerator block_duration
+block_duration = 0.03  # Default WaveGenerator block duration
+sample_rate = 16000
+periodsize = int(sample_rate * block_duration)  # 480 frames @ 16kHz
+
 speaker = Speaker(
-    device=Speaker.USB_SPEAKER_1,  # or None for auto-detect, or specific device
-    sample_rate=16000,
+    device=Speaker.USB_SPEAKER_1,  # or explicit device like "plughw:CARD=Device"
+    sample_rate=sample_rate,
     channels=1,
     format="FLOAT_LE",
+    periodsize=periodsize,  # Align with WaveGenerator blocks (eliminates glitches)
+    queue_maxsize=10,  # Low latency for real-time audio
 )
 
+# Start the external Speaker manually
+# WaveGenerator won't manage its lifecycle (ownership pattern)
+speaker.start()
+
 # Create WaveGenerator with the external speaker
-# WaveGenerator will manage the speaker's lifecycle (start/stop)
 wave_gen = WaveGenerator(
-    sample_rate=16000,
+    sample_rate=sample_rate,
     speaker=speaker,  # Pass pre-configured speaker
     wave_type="sine",
     glide=0.02,
 )
 
-# Start the WaveGenerator (which will also start the speaker)
+# Start the WaveGenerator (speaker already started above)
 App.start_brick(wave_gen)
 
 
@@ -62,5 +72,6 @@ print("Press Ctrl+C to stop")
 
 App.run(user_loop=play_sequence)
 
-# WaveGenerator automatically stops the speaker when it stops
+# Stop external Speaker manually (WaveGenerator doesn't manage external lifecycle)
+speaker.stop()
 print("Done")
