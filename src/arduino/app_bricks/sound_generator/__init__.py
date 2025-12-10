@@ -2,18 +2,21 @@
 #
 # SPDX-License-Identifier: MPL-2.0
 
-from arduino.app_utils import brick
+from arduino.app_utils import brick, Logger
 from arduino.app_peripherals.speaker import Speaker
 import threading
 from typing import Iterable
 import numpy as np
 import time
+import logging
 from pathlib import Path
 from collections import OrderedDict
 
 from .generator import WaveSamplesBuilder
 from .effects import *
 from .loaders import ABCNotationLoader
+
+logger = Logger("SoundGenerator", logging.DEBUG)
 
 
 class LRUDict(OrderedDict):
@@ -357,6 +360,7 @@ class SoundGeneratorStreamer:
             bytes: The audio block of the mixed sequences (float32).
         """
         duration = self._note_duration(note_duration)
+        logger.debug(f"play_chord: notes={notes}, note_duration={note_duration}, duration={duration}s, volume={volume}")
         if len(notes) == 1:
             self.play(notes[0], duration, volume)
             return
@@ -372,6 +376,7 @@ class SoundGeneratorStreamer:
                     volume = self._master_volume
                 data = self._wave_gen.generate_block(float(frequency), duration, volume)
                 waves.append(data)
+                logger.debug(f"  Generated wave for {note} @ {frequency}Hz, {len(data)} samples")
             else:
                 continue
         if len(waves) == 0:
@@ -380,7 +385,9 @@ class SoundGeneratorStreamer:
         chord /= np.max(np.abs(chord))  # Normalize to prevent clipping
         blk = chord.astype(np.float32)
         blk = self._apply_sound_effects(blk, base_frequency)
-        return self._to_bytes(blk)
+        audio_bytes = self._to_bytes(blk)
+        logger.debug(f"  Chord generated: {len(audio_bytes)} bytes")
+        return audio_bytes
 
     def play(self, note: str, note_duration: float | str = 1 / 4, volume: float = None) -> bytes:
         """
@@ -394,12 +401,15 @@ class SoundGeneratorStreamer:
         """
         duration = self._note_duration(note_duration)
         frequency = self._get_note(note)
+        logger.debug(f"play: note={note}, note_duration={note_duration}, duration={duration}s, frequency={frequency}Hz, volume={volume}")
         if frequency is not None and frequency >= 0.0:
             if volume is None:
                 volume = self._master_volume
             data = self._wave_gen.generate_block(float(frequency), duration, volume)
             data = self._apply_sound_effects(data, frequency)
-            return self._to_bytes(data)
+            audio_bytes = self._to_bytes(data)
+            logger.debug(f"  Generated audio: {len(audio_bytes)} bytes")
+            return audio_bytes
 
     def play_tone(self, note: str, duration: float = 0.25, volume: float = None) -> bytes:
         """
@@ -506,10 +516,25 @@ class SoundGenerator(SoundGeneratorStreamer):
         self._started = threading.Event()
         if output_device is None:
             self.external_speaker = False
-            self._output_device = Speaker(sample_rate=self.SAMPLE_RATE, format="FLOAT_LE")
+            # Configure periodsize and queue for very responsive stop operations
+            # Use 62.5ms periods (1000 frames @ 16kHz) for quick response to stop commands
+            # Very small queue (maxsize=3) = ~190ms total buffer for ultra-responsive stop
+            period_size = int(self.SAMPLE_RATE * 0.0625)  # 1000 frames = 62.5ms
+            self._output_device = Speaker(
+                sample_rate=self.SAMPLE_RATE,
+                format="FLOAT_LE",
+                periodsize=period_size,
+                queue_maxsize=3,  # Ultra-low latency: 3 × 62.5ms = ~190ms max buffer
+            )
         else:
             self.external_speaker = True
             self._output_device = output_device
+
+        # Step sequencer state
+        self._sequence_thread = None
+        self._sequence_stop_event = threading.Event()
+        self._sequence_lock = threading.Lock()
+        self._playback_session_id = 0  # Incremented each playback to invalidate stale callbacks
 
     def start(self):
         if self._started.is_set():
@@ -565,8 +590,10 @@ class SoundGenerator(SoundGeneratorStreamer):
             volume (float, optional): Volume level (0.0 to 1.0). If None, uses master volume.
             block (bool): If True, block until the entire chord has been played.
         """
+        logger.debug(f"SoundGenerator.play_chord: notes={notes}, block_on_queue=False")
         blk = super().play_chord(notes, note_duration, volume)
         self._output_device.play(blk, block_on_queue=False)
+        logger.debug(f"  Audio sent to device queue")
         if block:
             duration = self._note_duration(note_duration)
             if duration > 0.0:
@@ -581,8 +608,10 @@ class SoundGenerator(SoundGeneratorStreamer):
             volume (float, optional): Volume level (0.0 to 1.0). If None, uses master volume.
             block (bool): If True, block until the entire note has been played.
         """
+        logger.debug(f"SoundGenerator.play: note={note}, block_on_queue=False")
         data = super().play(note, note_duration, volume)
         self._output_device.play(data, block_on_queue=False)
+        logger.debug(f"  Audio sent to device queue")
         if block:
             duration = self._note_duration(note_duration)
             if duration > 0.0:
@@ -637,3 +666,179 @@ class SoundGenerator(SoundGeneratorStreamer):
         Clear the playback queue of the output device.
         """
         self._output_device.clear_playback_queue()
+
+    def play_step_sequence(
+        self,
+        sequence: list[list[str]],
+        note_duration: float | str = 1 / 8,
+        bpm: int = None,
+        loop: bool = False,
+        on_step_callback: callable = None,
+        on_complete_callback: callable = None,
+        volume: float = None,
+    ):
+        """
+        Play a step sequence with automatic timing, pre-buffering, and lookahead.
+        This method handles all the complexity of buffer management internally,
+        allowing the app to simply provide the sequence and let the brick manage playback.
+
+        Args:
+            sequence (list[list[str]]): List of steps, where each step is a list of notes.
+                Empty list or None means REST (silence) for that step.
+                Example: [['C4'], ['E4', 'G4'], [], ['C5']]
+            note_duration (float | str): Duration of each step as a float (like 1/8) or symbol ('E', 'Q', etc.).
+            bpm (int, optional): Tempo in beats per minute. If None, uses instance BPM.
+            loop (bool): If True, the sequence will loop indefinitely until stop_sequence() is called.
+            on_step_callback (callable, optional): Callback function called for each step.
+                Signature: on_step_callback(current_step: int, total_steps: int)
+            on_complete_callback (callable, optional): Callback function called when sequence completes (only if loop=False).
+                Signature: on_complete_callback()
+            volume (float, optional): Volume level (0.0 to 1.0). If None, uses master volume.
+
+        Returns:
+            None: Returns immediately after starting playback thread.
+
+        Example:
+            ```python
+            # Simple melody with chords
+            sequence = [
+                ["C4"],  # Step 0: Single note
+                ["E4", "G4"],  # Step 1: Chord
+                [],  # Step 2: REST
+                ["C5"],  # Step 3: High note
+            ]
+            sound_gen.play_step_sequence(sequence, note_duration=1 / 8, bpm=120)
+            ```
+        """
+        # Stop any existing sequence
+        self.stop_sequence()
+
+        # Use instance BPM if not specified
+        if bpm is None:
+            bpm = self._bpm
+
+        # Validate sequence
+        if not sequence or len(sequence) == 0:
+            logger.warning("play_step_sequence: Empty sequence provided")
+            return
+
+        # Start playback thread with new session ID
+        self._sequence_stop_event.clear()
+        self._playback_session_id += 1
+        session_id = self._playback_session_id
+        self._sequence_thread = threading.Thread(
+            target=self._playback_sequence_thread,
+            args=(sequence, note_duration, bpm, loop, on_step_callback, on_complete_callback, volume, session_id),
+            daemon=True,
+            name="SoundGen-StepSeq",
+        )
+        self._sequence_thread.start()
+        logger.info(f"Step sequence started: {len(sequence)} steps at {bpm} BPM (session {session_id})")
+
+    def stop_sequence(self):
+        """
+        Stop the currently playing step sequence.
+        This method signals the playback thread to stop and clears the queue immediately.
+        The thread will detect the stop signal and exit at the next check point.
+        """
+        logger.info("stop_sequence() called")
+        with self._sequence_lock:
+            if self._sequence_thread and self._sequence_thread.is_alive():
+                logger.info("Stopping step sequence playback - calling drop_playback()")
+                # Increment session ID to invalidate the running thread immediately
+                self._playback_session_id += 1
+                self._sequence_stop_event.set()
+                # Clear reference immediately - thread will clean itself up
+                self._sequence_thread = None
+                self._output_device.drop_playback()
+            else:
+                logger.warning("stop_sequence called but no active sequence thread")
+
+    def is_sequence_playing(self) -> bool:
+        """
+        Check if a step sequence is currently playing.
+
+        Returns:
+            bool: True if a sequence is playing, False otherwise.
+        """
+        with self._sequence_lock:
+            return self._sequence_thread is not None and self._sequence_thread.is_alive()
+
+    def _playback_sequence_thread(
+        self,
+        sequence: list[list[str]],
+        note_duration: float | str,
+        bpm: int,
+        loop: bool,
+        on_step_callback: callable,
+        on_complete_callback: callable,
+        volume: float,
+        session_id: int,
+    ):
+        """Internal thread for step sequence playback.
+
+        Simple approach: generate step-by-step, use block_on_queue=True for natural
+        synchronization with ALSA consumption. Callbacks are emitted immediately after
+        queuing each step, ensuring perfect sync with audio playback.
+        """
+        from itertools import cycle
+        import numpy as np
+
+        try:
+            duration = self._note_duration(note_duration)
+            total_steps = len(sequence)
+
+            logger.info(f"Starting sequence: {total_steps} steps at {bpm} BPM")
+
+            # PRE-FILL: Queue one period of silence to prevent first-note underrun
+            # This gives ALSA something to consume while we generate the first real note
+            silence_frames = int(duration * self._output_device.sample_rate)
+            silence = np.zeros(silence_frames, dtype=np.float32).tobytes()
+            self._output_device.play(silence, block_on_queue=False)
+            logger.debug(f"Pre-filled queue with {len(silence)} bytes of silence")
+
+            # Create infinite iterator if looping, otherwise single pass
+            step_iterator = cycle(enumerate(sequence)) if loop else enumerate(sequence)
+
+            for step_index, notes in step_iterator:
+                # Check for stop signal
+                if self._sequence_stop_event.is_set():
+                    logger.debug(f"Sequence stopped at step {step_index}")
+                    break
+
+                # Generate audio for this step
+                if notes and len(notes) > 0:
+                    if len(notes) == 1:
+                        data = super(SoundGenerator, self).play(notes[0], note_duration, volume)
+                    else:
+                        data = super(SoundGenerator, self).play_chord(notes, note_duration, volume)
+                else:
+                    # REST: silence
+                    data = super(SoundGenerator, self).play("REST", note_duration, volume)
+
+                # Queue audio - BLOCKS until there's space (natural sync with ALSA!)
+                if data:
+                    self._output_device.play(data, block_on_queue=True)
+
+                # Emit callback IMMEDIATELY after queuing
+                # This is synchronized with actual playback timing via blocking
+                if on_step_callback:
+                    try:
+                        on_step_callback(step_index, total_steps)
+                    except Exception as e:
+                        logger.error(f"Error in step callback: {e}")
+
+            logger.info("Sequence playback ended")
+
+            # Call completion callback if provided and not looping
+            if not loop and on_complete_callback:
+                try:
+                    on_complete_callback()
+                except Exception as e:
+                    logger.error(f"Error in complete callback: {e}")
+
+        except Exception as e:
+            logger.error(f"Error in sequence playback: {e}", exc_info=True)
+        finally:
+            with self._sequence_lock:
+                self._sequence_thread = None

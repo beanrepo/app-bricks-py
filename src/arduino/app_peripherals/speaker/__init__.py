@@ -7,9 +7,10 @@ import numpy as np
 import threading
 import queue
 import re
+import logging
 from arduino.app_utils import Logger
 
-logger = Logger("Speaker")
+logger = Logger("Speaker", logging.DEBUG)
 
 
 class SpeakerException(Exception):
@@ -97,6 +98,7 @@ class Speaker:
         self._pcm_lock = threading.Lock()
         self._native_rate = None
         self._is_reproducing = threading.Event()
+        self._is_dropping = threading.Event()  # Signal to playback loop to pause during drop
         self._periodsize = periodsize  # Store configured periodsize (None = hardware default)
         self._playing_queue: bytes = queue.Queue(maxsize=queue_maxsize)  # Queue for audio data to play with limited capacity
         self.device = self._resolve_device(device)
@@ -432,6 +434,7 @@ class Speaker:
             try:
                 data = self._playing_queue.get(timeout=1)  # Wait for audio data
                 if data is None:
+                    logger.debug("Got None from queue, skipping")
                     continue  # Skip if no data is available
 
                 # Check queue depth periodically
@@ -444,7 +447,14 @@ class Speaker:
                 with self._pcm_lock:
                     if self._pcm is not None:
                         try:
+                            # Skip writing if drop is in progress
+                            if self._is_dropping.is_set():
+                                logger.debug("Skipping PCM write during drop operation")
+                                continue
+
+                            logger.debug(f"Writing {len(data)} bytes to PCM device")
                             written = self._pcm.write(data)
+                            logger.debug(f"Successfully wrote {len(data)} bytes to PCM device")
 
                             # Check for ALSA errors (negative return values)
                             if written < 0:
@@ -516,3 +526,28 @@ class Speaker:
     def clear_playback_queue(self):
         """Clear the playback queue."""
         self._clear_queue()
+
+    def drop_playback(self):
+        """Drop all pending audio data immediately (both queue and hardware buffer).
+
+        This method clears both the software queue and the ALSA hardware buffer,
+        stopping audio playback immediately. Use this for responsive stop operations.
+        """
+        # Signal playback loop to stop writing temporarily
+        self._is_dropping.set()
+
+        # Clear software queue first
+        self._clear_queue()
+
+        # Then drop ALSA hardware buffer
+        with self._pcm_lock:
+            if self._pcm is not None:
+                try:
+                    self._pcm.drop()  # Immediately stop PCM, drop pending frames
+                    logger.debug("ALSA PCM buffer dropped")
+                except Exception as e:
+                    logger.warning(f"Failed to drop PCM buffer: {e}")
+
+        # Allow playback to resume
+        self._is_dropping.clear()
+        logger.debug("Playback queue and PCM buffer cleared")
