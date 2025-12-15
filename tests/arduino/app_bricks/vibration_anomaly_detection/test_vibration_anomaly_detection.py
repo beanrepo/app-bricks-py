@@ -24,7 +24,7 @@ def app_instance(monkeypatch):
 @pytest.fixture(autouse=True)
 def mock_dependencies(monkeypatch: pytest.MonkeyPatch):
     """Mock out docker-compose lookups and image helpers."""
-    fake_compose = {"services": {"ei-inference": {"ports": ["${BIND_ADDRESS:-127.0.0.1}:${BIND_PORT:-1337}:1337"]}}}
+    fake_compose = {"services": {"ei-inference": {"ports": ["${BIND_ADDRESS:-127.0.0.1}:1337:1337"]}}}
     monkeypatch.setattr("arduino.app_internal.core.ei.load_brick_compose_file", lambda cls: fake_compose)
     monkeypatch.setattr("arduino.app_internal.core.resolve_address", lambda host: "127.0.0.1")
     monkeypatch.setattr("arduino.app_internal.core.parse_docker_compose_variable", lambda x: [(None, None), (None, "1337")])

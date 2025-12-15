@@ -30,20 +30,18 @@ def test_parse_docker_compose_multi_variable():
 def test_docker_compose_load_all_vars():
     """Test loading all variables from a Docker Compose file."""
     discovered_vars = load_module_supported_variables("tests/arduino/app_core/brick_compose_test_data.yaml")
-    assert len(discovered_vars) == 6
+    assert len(discovered_vars) == 5
     for var in discovered_vars:
-        if var.name == "DATABASE_HOST":
-            assert var.default_value == "db"
-        elif var.name == "DATABASE_PORT":
-            assert var.default_value == "8086"
-        elif var.name == "BIND_ADDRESS":
-            assert var.default_value == "127.0.0.1"
-        elif var.name == "ADMIN_TOKEN":
-            assert var.default_value == "392edbf2-b8a2-481f-979d-3f188b2c05f0"
-        elif var.name == "USERNAME":
-            assert var.default_value == "admin"
-        elif var.name == "APP_HOME":
+        if var.name == "APP_HOME":
             assert var.default_value == "."
+        if var.name == "BIND_ADDRESS":
+            assert var.default_value == "127.0.0.1"
+        if var.name == "DB_USERNAME":
+            assert var.default_value == "admin"
+        if var.name == "DB_PASSWORD":
+            assert var.default_value == "Arduino15"
+        if var.name == "INFLUXDB_ADMIN_TOKEN":
+            assert var.default_value == "392edbf2-b8a2-481f-979d-3f188b2c05f0"
 
 
 def test_get_compose_file_dbstorage_tsstore():
@@ -57,19 +55,17 @@ def test_get_compose_file_dbstorage_tsstore():
     compose_file = get_brick_compose_file(_InfluxDBHandler)
     assert compose_file is not None
     discovered_vars = load_module_supported_variables(compose_file)
-    assert len(discovered_vars) == 6
+    assert len(discovered_vars) == 5
     for var in discovered_vars:
-        if var.name == "DOCKER_INFLUXDB_INIT_MODE":
-            assert var.default_value == "setup"
-        if var.name == "DOCKER_INFLUXDB_INIT_USERNAME":
+        if var.name == "APP_HOME":
+            assert var.default_value == "."
+        if var.name == "BIND_ADDRESS":
+            assert var.default_value == "127.0.0.1"
+        if var.name == "DB_USERNAME":
             assert var.default_value == "admin"
-        if var.name == "DOCKER_INFLUXDB_INIT_PASSWORD":
+        if var.name == "DB_PASSWORD":
             assert var.default_value == "Arduino15"
-        if var.name == "DOCKER_INFLUXDB_INIT_ORG":
-            assert var.default_value == "arduino"
-        if var.name == "DOCKER_INFLUXDB_INIT_BUCKET":
-            assert var.default_value == "arduinostorage"
-        if var.name == "DOCKER_INFLUXDB_INIT_ADMIN_TOKEN":
+        if var.name == "INFLUXDB_ADMIN_TOKEN":
             assert var.default_value == "392edbf2-b8a2-481f-979d-3f188b2c05f0"
 
 

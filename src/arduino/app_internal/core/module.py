@@ -88,7 +88,7 @@ def parse_docker_compose_variable(variable_string) -> List[tuple[str, str]] | st
 
     Args:
         variable_string: The string to parse (e.g., "${DATABASE_HOST:-db}",
-            "${BIND_ADDRESS:-127.0.0.1}:${BIND_PORT:-8086}:8086"), "${DATABASE_PASSWORD}".
+            "${BIND_ADDRESS:-127.0.0.1}:8086:8086"), "${DATABASE_PASSWORD}".
 
     Returns:
         A list of tuple containing the variable name and the default value (if present), or the original

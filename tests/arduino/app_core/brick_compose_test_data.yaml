@@ -1,5 +1,4 @@
 # BIND_ADDRESS = external container address
-# BIND_PORT = container port
 # DB_USERNAME = Edge Impulse project API key
 # DB_PASSWORD = Database password
 # INFLUXDB_ADMIN_TOKEN = InfluxDB admin token
@@ -7,7 +6,7 @@ services:
   dbstorage-influx:
     image: influxdb:2.7
     ports:
-      - "${BIND_ADDRESS:-127.0.0.1}:${BIND_PORT:-8086}:8086"
+      - "${BIND_ADDRESS:-127.0.0.1}:8086:8086"
     volumes:
       - "${APP_HOME:-.}/data/influx-data:/var/lib/influxdb2"
     environment:

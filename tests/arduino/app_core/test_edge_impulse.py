@@ -19,7 +19,7 @@ def mock_infra(monkeypatch: pytest.MonkeyPatch):
     bytes unchanged.
     """
     # avoid real docker-compose lookups
-    fake = {"services": {"ei-inference": {"ports": ["${BIND_ADDRESS:-127.0.0.1}:${BIND_PORT:-1337}:1337"]}}}
+    fake = {"services": {"ei-inference": {"ports": ["${BIND_ADDRESS:-127.0.0.1}:1337:1337"]}}}
     monkeypatch.setattr("arduino.app_internal.core.ei.load_brick_compose_file", lambda cls: fake)
     monkeypatch.setattr("arduino.app_internal.core.resolve_address", lambda h: "127.0.0.1")
     monkeypatch.setattr("arduino.app_internal.core.parse_docker_compose_variable", lambda s: [(None, None), (None, "1337")])
@@ -289,7 +289,7 @@ def test_infer_from_features(monkeypatch: pytest.MonkeyPatch, facade: EdgeImpuls
     monkeypatch.setattr(HttpClient, "request_with_retry", fake_get)
 
     # Mock docker-compose related functions
-    fake_compose = {"services": {"ei-inference": {"ports": ["${BIND_ADDRESS:-127.0.0.1}:${BIND_PORT:-1337}:1337"]}}}
+    fake_compose = {"services": {"ei-inference": {"ports": ["${BIND_ADDRESS:-127.0.0.1}:1337:1337"]}}}
     monkeypatch.setattr("arduino.app_internal.core.ei.load_brick_compose_file", lambda cls: fake_compose)
     monkeypatch.setattr("arduino.app_internal.core.resolve_address", lambda h: "127.0.0.1")
     monkeypatch.setattr("arduino.app_internal.core.parse_docker_compose_variable", lambda s: [(None, None), (None, "1337")])

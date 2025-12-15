@@ -86,7 +86,7 @@ class ArduinoBrick:
         if self.require_container:
             var_to_add: List[ModuleVariable] = []
             for var in self.docker_compose_variables:
-                if var.name != "APPSLAB_VERSION" and var.name != "DOCKER_REGISTRY_BASE" and var.name != "BIND_ADDRESS" and var.name != "BIND_PORT":
+                if var.name != "APPSLAB_VERSION" and var.name != "DOCKER_REGISTRY_BASE" and var.name != "BIND_ADDRESS":
                     var_to_add.append(var)
             vars_list: List[Dict] = [var.to_dict() for var in var_to_add]
             out_dict["variables"] = vars_list
