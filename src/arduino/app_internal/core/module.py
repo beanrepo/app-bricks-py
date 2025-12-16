@@ -152,19 +152,22 @@ class ModuleVariable:
 
 
 class EnvVariable:
-    def __init__(self, name: str, description: str, default_value: str = None):
+    def __init__(self, name: str, description: str, default_value: str = None, hidden: bool = False):
         """Represents a variable in brick_config file."""
         self.name = name
         self.default_value = default_value
         self.description = description
+        self.hidden = hidden
 
     def to_dict(self) -> dict:
         """Converts the EnvVariable object to a dictionary."""
-        dict_out = {"name": self.name, "default_value": self.default_value, "description": self.description}
+        dict_out = {"name": self.name, "default_value": self.default_value, "description": self.description, "hidden": self.hidden}
         if self.default_value is None or self.default_value == "":
             del dict_out["default_value"]
         if self.description is None or self.description == "":
             del dict_out["description"]
+        if not self.hidden:
+            del dict_out["hidden"]
         return dict_out
 
     def __str__(self):

@@ -13,7 +13,7 @@ variables:
 - name: EI_OBJ_DETECTION_MODEL
   description: Path to the model file
   hidden: true
-  default_value: /models/ootb/ei/yolox-object-detection.eim
+  default_value: /models/ootb/ei/yolo-x-nano.eim
 - name: CUSTOM_MODEL_PATH
   description: Path to the custom model directory
   hidden: true
