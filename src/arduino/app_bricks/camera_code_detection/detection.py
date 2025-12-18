@@ -6,12 +6,12 @@ from dataclasses import dataclass
 import threading
 from typing import Callable
 
-import cv2
 from pyzbar.pyzbar import decode, ZBarSymbol, PyZbarError
 import numpy as np
-from PIL.Image import Image
+from PIL.Image import Image, fromarray
 
-from arduino.app_peripherals.usb_camera import USBCamera
+from arduino.app_peripherals.camera import Camera, BaseCamera
+from arduino.app_utils.image import greyscale
 from arduino.app_utils import brick, Logger
 
 logger = Logger("CameraCodeDetection")
@@ -44,7 +44,7 @@ class CameraCodeDetection:
     """Scans a camera video feed for QR codes and/or barcodes.
 
     Args:
-        camera (USBCamera): The USB camera instance. If None, a default camera will be initialized.
+        camera (BaseCamera): The camera instance to use for capturing video. If None, a default camera will be initialized.
         detect_qr (bool): Whether to detect QR codes. Defaults to True.
         detect_barcode (bool): Whether to detect barcodes. Defaults to True.
 
@@ -55,7 +55,7 @@ class CameraCodeDetection:
 
     def __init__(
         self,
-        camera: USBCamera = None,
+        camera: BaseCamera = None,
         detect_qr: bool = True,
         detect_barcode: bool = True,
     ):
@@ -63,10 +63,12 @@ class CameraCodeDetection:
         if detect_qr is False and detect_barcode is False:
             raise ValueError("At least one of 'detect_qr' or 'detect_barcode' must be True.")
 
+        self._camera = camera if camera else Camera()
+
         self._detect_qr = detect_qr
         self._detect_barcode = detect_barcode
 
-        # These callbacks do not require locks as long as we're running on CPython
+        # These callbacks don't require locking as long as we're running on CPython
         self._on_frame_cb = None
         self._on_error_cb = None
 
@@ -75,8 +77,6 @@ class CameraCodeDetection:
         self._on_detect_cb_lock = threading.Lock()  # Synchronizes access to both callback and bool flag
 
         self.already_seen_codes = set()
-
-        self._camera = camera if camera else USBCamera()
 
     def start(self):
         """Start the detector and begin scanning for codes."""
@@ -154,13 +154,13 @@ class CameraCodeDetection:
             self._on_error(e)
             return
 
+        pil_frame = fromarray(frame)
+        self._on_frame(pil_frame)
+
         # Use grayscale for barcode/QR code detection
-        gs_frame = cv2.cvtColor(np.asarray(frame), cv2.COLOR_RGB2GRAY)
-
-        self._on_frame(frame)
-
+        gs_frame = greyscale(frame)
         detections = self._scan_frame(gs_frame)
-        self._on_detect(frame, detections)
+        self._on_detect(pil_frame, detections)
 
     def _on_frame(self, frame: Image):
         if self._on_frame_cb:
@@ -170,7 +170,7 @@ class CameraCodeDetection:
                 logger.error(f"Failed to run on_frame callback: {e}")
                 self._on_error(e)
 
-    def _scan_frame(self, frame: cv2.typing.MatLike) -> list[Detection]:
+    def _scan_frame(self, frame: np.ndarray) -> list[Detection]:
         """Scan the frame for a single barcode or QR code."""
         detections = []
 
