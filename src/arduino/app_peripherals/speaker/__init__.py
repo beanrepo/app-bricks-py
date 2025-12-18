@@ -97,6 +97,7 @@ class Speaker:
         self._pcm_lock = threading.Lock()
         self._native_rate = None
         self._is_reproducing = threading.Event()
+        self._is_dropping = threading.Event()  # Signal to playback loop to pause during drop
         self._periodsize = periodsize  # Store configured periodsize (None = hardware default)
         self._playing_queue: bytes = queue.Queue(maxsize=queue_maxsize)  # Queue for audio data to play with limited capacity
         self.device = self._resolve_device(device)
@@ -352,10 +353,15 @@ class Speaker:
                     break
         logger.debug("Playback queue cleared.")
 
-    def start(self):
+    def start(self, notify_if_started: bool = True):
         """Start the spaker stream by opening the PCM device."""
         if self._is_reproducing.is_set():
-            raise RuntimeError("Spaker is already reproducing audio, cannot start again.")
+            if notify_if_started:
+                raise RuntimeError("Spaker is already reproducing audio, cannot start again.")
+            else:
+                logger.debug("Spaker is already reproducing audio, start() call ignored.")
+                return
+
         self._clear_queue()
         self._open_pcm()
         self._is_reproducing.set()
@@ -367,7 +373,7 @@ class Speaker:
     def stop(self):
         """Close the PCM device if open."""
         if not self._is_reproducing.is_set():
-            logger.warning("Spaker is not recording, nothing to stop.")
+            logger.debug("Spaker is not recording, nothing to stop.")
             return
 
         # Stop the playback thread
@@ -427,6 +433,7 @@ class Speaker:
             try:
                 data = self._playing_queue.get(timeout=1)  # Wait for audio data
                 if data is None:
+                    logger.debug("Got None from queue, skipping")
                     continue  # Skip if no data is available
 
                 # Check queue depth periodically
@@ -439,7 +446,14 @@ class Speaker:
                 with self._pcm_lock:
                     if self._pcm is not None:
                         try:
+                            # Skip writing if drop is in progress
+                            if self._is_dropping.is_set():
+                                logger.debug("Skipping PCM write during drop operation")
+                                continue
+
+                            logger.debug(f"Writing {len(data)} bytes to PCM device")
                             written = self._pcm.write(data)
+                            logger.debug(f"Successfully wrote {len(data)} bytes to PCM device")
 
                             # Check for ALSA errors (negative return values)
                             if written < 0:
@@ -499,3 +513,40 @@ class Speaker:
         except queue.Full:
             # logger.warning("Playback queue is full, dropping oldest data.")
             self._playing_queue.get_nowait()
+
+    def is_reproducing(self) -> bool:
+        """Check if the speaker is currently reproducing audio.
+
+        Returns:
+            bool: True if reproducing, False otherwise.
+        """
+        return self._is_reproducing.is_set()
+
+    def clear_playback_queue(self):
+        """Clear the playback queue."""
+        self._clear_queue()
+
+    def clear(self):
+        """Clear all pending audio data immediately (both queue and hardware buffer).
+
+        This method clears both the software queue and the ALSA hardware buffer,
+        stopping audio playback immediately. Use this for responsive stop operations.
+        """
+        # Signal playback loop to stop writing temporarily
+        self._is_dropping.set()
+
+        # Clear software queue first
+        self._clear_queue()
+
+        # Then clear ALSA hardware buffer
+        with self._pcm_lock:
+            if self._pcm is not None:
+                try:
+                    self._pcm.drop()  # Immediately stop PCM, drop pending frames
+                    logger.debug("ALSA PCM buffer cleared")
+                except Exception as e:
+                    logger.warning(f"Failed to clear PCM buffer: {e}")
+
+        # Allow playback to resume
+        self._is_dropping.clear()
+        logger.debug("Playback queue and PCM buffer cleared")
