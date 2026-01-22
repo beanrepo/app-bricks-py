@@ -5,7 +5,9 @@
 import gc
 import pytest
 import os
+import tempfile
 import time
+from unittest.mock import patch
 from arduino.app_bricks.dbstorage_sqlstore import SQLStore, DBStorageSQLStoreError
 from arduino.app_utils import Logger
 
@@ -14,23 +16,24 @@ logger = Logger("SQLStore.tests")
 
 @pytest.fixture
 def open_sqlstore_database():
-    """Fixture to provide shared data."""
-    # Setup logic
-    db = SQLStore(database_name="test")
-    yield db
-    # Teardown logic
-    db.stop()
+    """Fixture to provide an open SQLStore database for testing."""
+    with tempfile.TemporaryDirectory() as tmpdir, patch("os.makedirs"):
+        db = SQLStore(database_name="test")
+        db_path = os.path.join(tmpdir, "test.db")
+        os.makedirs(db_path, exist_ok=True)
+        db.database_name = db_path
+        yield db
+        db.stop()
+        gc.collect()
 
-    gc.collect()  # Force close all connections and clean up resources
-
-    for _ in range(30):
-        try:
-            os.remove("./data/dbstorage_sqlstore/test.db")
-            break
-        except PermissionError:
-            time.sleep(0.1)
-    else:
-        print("[WARNING] Impossible to remove the test database file. There may be a holding block after 3s.")
+        for _ in range(30):
+            try:
+                os.remove(db_path)
+                break
+            except PermissionError:
+                time.sleep(0.1)
+        else:
+            print("[WARNING] Impossible to remove the test database file. There may be a holding block after 3s.")
 
 
 def test_create_table(open_sqlstore_database: SQLStore):
