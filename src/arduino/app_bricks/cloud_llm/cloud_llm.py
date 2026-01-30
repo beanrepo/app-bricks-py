@@ -2,6 +2,7 @@
 #
 # SPDX-License-Identifier: MPL-2.0
 
+import asyncio
 import base64
 import os
 import threading
@@ -40,8 +41,10 @@ class CloudLLM:
         model: Union[str, CloudModel] = CloudModel.ANTHROPIC_CLAUDE,
         system_prompt: str = "",
         temperature: Optional[float] = 0.7,
+        max_tool_loops: int = 8,
         timeout: int = 30,
         tools: List[Callable[..., Any]] = None,
+        callbacks: Any = None,
         **kwargs,
     ):
         """Initializes the CloudLLM brick with the specified provider and configuration.
@@ -58,8 +61,11 @@ class CloudLLM:
             temperature (Optional[float]): The sampling temperature between 0.0 and 1.0.
                 Higher values make output more random/creative; lower values make it more
                 deterministic. Defaults to 0.7.
+            max_tool_loops (int): The maximum number of consecutive tool-call loops
+                allowed during a single chat interaction. Defaults to 8.
             timeout (int): The maximum duration in seconds to wait for a response before
                 timing out. Defaults to 30.
+            callbacks (Any): Optional callbacks for monitoring generation events.
             tools (List[Callable[..., Any]]): A list of callable tool functions to register. Defaults to None.
             **kwargs: Additional arguments passed to the model constructor
 
@@ -75,7 +81,9 @@ class CloudLLM:
         self._model = model
         self._system_prompt = system_prompt
         self._temperature = temperature
+        self._max_tool_loops = max_tool_loops
         self._timeout = timeout
+        self._callbacks = callbacks
 
         # Registered tools
         self._tools_map = {}
@@ -171,7 +179,12 @@ class CloudLLM:
             if tool_name in self._tools_map:
                 logger.debug(f"Invoking tool function for: {tool_name}")
                 tool_func = self._tools_map[tool_name]
-                tool_output = tool_func.invoke(tool_args)
+                tool_output = asyncio.run(
+                    tool_func.ainvoke(
+                        tool_args,
+                        config={"callbacks": self._callbacks},
+                    )
+                )
                 logger.debug(f"Tool '{tool_name}' returned: {tool_output}")
 
                 # Append tool output message to current message scope
@@ -222,15 +235,25 @@ class CloudLLM:
 
         try:
             input_messages = self._get_message_with_history(message, images)
-            message = self._model.invoke(input_messages)
-            if message is None:
-                raise RuntimeError("Received empty response from the LLM.")
+            loops = 0
 
-            logger.debug(f"Model invoked. Full response: {message}")
-            if message.tool_calls and len(message.tool_calls) > 0:
-                input_messages.append(message)  # Add the previous AI message to scoped history
-                input_messages = self._process_tool_calls(message.tool_calls, input_messages.copy())
-                message = self._model.invoke(input_messages)
+            while True:
+                message = self._model.invoke(input=input_messages, config={"callbacks": self._callbacks})
+                if message is None:
+                    raise RuntimeError("Received empty response from the LLM.")
+
+                logger.debug(f"Model invoked. Full response: {message}")
+
+                tool_calls = getattr(message, "tool_calls", None) or []
+                if not tool_calls:
+                    break
+
+                loops += 1
+                if loops > self._max_tool_loops:
+                    raise RuntimeError(f"Too many consecutive tool-call loops ({self._max_tool_loops}). Possible tool loop.")
+
+                input_messages.append(message)
+                input_messages = self._process_tool_calls(tool_calls, input_messages.copy())
 
             # Add the AI message to long term history
             self._history.add_messages([message])
@@ -280,7 +303,7 @@ class CloudLLM:
             # If there were tool calls, process them
             if len(tool_calls) > 0:
                 input_messages = self._process_tool_calls(tool_calls, input_messages.copy())
-                for token in self._model.stream(input_messages):
+                for token in self._model.stream(input=input_messages, config={"callbacks": self._callbacks}):
                     if not self._keep_streaming.is_set():
                         break
                     if token.content:

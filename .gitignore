@@ -191,5 +191,8 @@ Taskfile.yml
 
 *.exe
 
+# DeepEval
+.deepeval/
+
 # Other
 design/
