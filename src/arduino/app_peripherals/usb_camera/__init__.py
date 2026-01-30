@@ -7,7 +7,7 @@ import warnings
 from PIL import Image
 from arduino.app_peripherals.camera import Camera as Camera, CameraReadError as CRE, CameraOpenError as COE
 from arduino.app_peripherals.camera.v4l_camera import V4LCamera
-from arduino.app_utils.image import letterboxed, compressed_to_png
+from arduino.app_utils.image import letterboxed, compressed_to_png, numpy_to_pil
 from arduino.app_utils import Logger
 
 logger = Logger("USB Camera")
@@ -64,7 +64,7 @@ class USBCamera:
                 # If compression is enabled, we expect image_bytes to be in PNG format
                 return Image.open(io.BytesIO(image_bytes))
             else:
-                return Image.fromarray(image_bytes)
+                return numpy_to_pil(image_bytes)
         except Exception as e:
             logger.exception(f"Error converting captured bytes to PIL Image: {e}")
             return None

@@ -8,10 +8,10 @@ from typing import Callable
 
 from pyzbar.pyzbar import decode, ZBarSymbol, PyZbarError
 import numpy as np
-from PIL.Image import Image, fromarray
+from PIL.Image import Image
 
 from arduino.app_peripherals.camera import Camera, BaseCamera
-from arduino.app_utils.image import greyscale
+from arduino.app_utils.image import greyscale, numpy_to_pil
 from arduino.app_utils import brick, Logger
 
 logger = Logger("CameraCodeDetection")
@@ -154,7 +154,7 @@ class CameraCodeDetection:
             self._on_error(e)
             return
 
-        pil_frame = fromarray(frame)
+        pil_frame = numpy_to_pil(frame)
         self._on_frame(pil_frame)
 
         # Use grayscale for barcode/QR code detection
