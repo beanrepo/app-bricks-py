@@ -2,16 +2,23 @@
 #
 # SPDX-License-Identifier: MPL-2.0
 
-from arduino.app_utils import brick, Logger
-from arduino.app_internal.core import load_brick_compose_file, resolve_address
-from arduino.app_internal.core import EdgeImpulseRunnerFacade
-import threading
 import time
-from typing import Callable
-from websockets.sync.client import connect, ClientConnection
-from websockets.exceptions import ConnectionClosedOK, ConnectionClosedError
 import json
 import inspect
+import threading
+import socket
+import numpy as np
+from typing import Callable
+
+from websockets.sync.client import connect
+from websockets.sync.connection import Connection
+from websockets.exceptions import ConnectionClosedOK, ConnectionClosedError
+
+from arduino.app_peripherals.camera import Camera, BaseCamera, WebSocketCamera
+from arduino.app_internal.core import load_brick_compose_file, resolve_address
+from arduino.app_internal.core import EdgeImpulseRunnerFacade
+from arduino.app_utils.image.adjustments import compress_to_jpeg
+from arduino.app_utils import brick, Logger
 
 logger = Logger("VideoImageClassification")
 
@@ -25,10 +32,11 @@ class VideoImageClassification:
 
     ALL_HANDLERS_KEY = "__ALL"
 
-    def __init__(self, confidence: float = 0.3, debounce_sec: float = 0.0):
+    def __init__(self, camera: BaseCamera | None = None, confidence: float = 0.3, debounce_sec: float = 0.0):
         """Initialize the VideoImageClassification class.
 
         Args:
+            camera (BaseCamera): The camera instance to use for capturing video. If None, a default camera will be initialized.
             confidence (float): The minimum confidence level for a classification to be considered valid. Default is 0.3.
             debounce_sec (float): The minimum time in seconds between consecutive detections of the same object
                 to avoid multiple triggers. Default is 0 seconds.
@@ -36,6 +44,8 @@ class VideoImageClassification:
         Raises:
              RuntimeError: If the host address could not be resolved.
         """
+        self._camera = camera if camera else Camera()
+
         self._confidence = confidence
         self._debounce_sec = debounce_sec
         self._last_detected = {}
@@ -46,6 +56,8 @@ class VideoImageClassification:
         self._is_running = threading.Event()
 
         infra = load_brick_compose_file(self.__class__)
+        if infra is None or "services" not in infra:
+            raise RuntimeError("Infrastructure configuration could not be loaded.")
         for k, v in infra["services"].items():
             self._host = k
             break  # Only one service is expected
@@ -114,66 +126,98 @@ class VideoImageClassification:
             self._handlers[object] = callback
 
     def start(self):
-        """Start the classification stream.
-
-        This only sets the internal running flag. You must call
-        `execute` in a loop or a separate thread to actually begin receiving classification results.
-        """
+        """Start the classification."""
+        self._camera.start()
         self._is_running.set()
 
     def stop(self):
-        """Stop the classification stream and release resources.
-
-        This clears the running flag. Any active `execute` loop
-        will exit gracefully at its next iteration.
-        """
+        """Stop the classification and release resources."""
         self._is_running.clear()
+        self._camera.stop()
 
-    def execute(self):
-        """Run the main classification loop.
+    @brick.execute
+    def classification_loop(self):
+        """Classification main loop.
 
-        Behavior:
-            - Opens a WebSocket connection to the model runner.
-            - Receives classification messages in real time.
-            - Filters classifications below the confidence threshold.
-            - Applies debounce rules before invoking callbacks.
-            - Retries on transient connection errors until stopped.
-
-        Exceptions:
-            ConnectionClosedOK:
-                Raised to exit when the server closes the connection cleanly.
-            ConnectionClosedError, TimeoutError, ConnectionRefusedError:
-                Logged and retried with backoff.
+        Maintains WebSocket connection to the model runner and processes classification messages.
+        Retries on connection errors until stopped.
         """
         while self._is_running.is_set():
             try:
                 with connect(self._uri) as ws:
+                    logger.info("WebSocket connection established")
                     while self._is_running.is_set():
                         try:
                             message = ws.recv()
                             if not message:
                                 continue
+                            if isinstance(message, (bytes, bytearray, memoryview)):
+                                message = bytes(message).decode("utf-8")
                             self._process_message(ws, message)
                         except ConnectionClosedOK:
                             raise
                         except (TimeoutError, ConnectionRefusedError, ConnectionClosedError):
-                            logger.warning(f"Connection lost. Retrying...")
+                            logger.warning(f"WebSocket connection lost. Retrying...")
                             raise
                         except Exception as e:
                             logger.exception(f"Failed to process detection: {e}")
             except ConnectionClosedOK:
-                logger.debug(f"Disconnected cleanly, exiting WebSocket read loop.")
+                logger.debug(f"WebSocket disconnected cleanly, exiting loop.")
                 return
             except (TimeoutError, ConnectionRefusedError, ConnectionClosedError):
                 logger.debug(f"Waiting for model runner. Retrying...")
-                import time
-
                 time.sleep(2)
                 continue
             except Exception as e:
                 logger.exception(f"Failed to establish WebSocket connection to {self._host}: {e}")
+                time.sleep(2)
 
-    def _process_message(self, ws: ClientConnection, message: str):
+    @brick.execute
+    def camera_loop(self):
+        """Camera main loop.
+
+        Captures images from the camera and forwards them over the TCP connection.
+        Retries on connection errors until stopped.
+        """
+        while self._is_running.is_set():
+            try:
+                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as tcp_socket:
+                    tcp_socket.connect((self._host, 5050))
+                    logger.info(f"TCP connection established to {self._host}:5050")
+
+                    if isinstance(self._camera, WebSocketCamera):
+                        # Send a priming frame to initialize the EI pipeline and its web server
+                        res = (self._camera.resolution[1], self._camera.resolution[0], 3)
+                        frame = np.zeros(res, dtype=np.uint8)
+                        jpeg_frame = compress_to_jpeg(frame)
+                        if jpeg_frame is not None:
+                            tcp_socket.sendall(jpeg_frame.tobytes())
+
+                    while self._is_running.is_set():
+                        try:
+                            frame = self._camera.capture()
+                            if frame is None:
+                                time.sleep(0.01)  # Brief sleep if no image available
+                                continue
+
+                            jpeg_frame = compress_to_jpeg(frame)
+                            if jpeg_frame is not None:
+                                tcp_socket.sendall(jpeg_frame.tobytes())
+
+                        except (BrokenPipeError, ConnectionResetError, OSError) as e:
+                            logger.warning(f"TCP connection lost: {e}. Retrying...")
+                            break
+                        except Exception as e:
+                            logger.exception(f"Error capturing/sending image: {e}")
+
+            except (ConnectionRefusedError, OSError) as e:
+                logger.debug(f"TCP connection failed: {e}. Retrying in 2 seconds...")
+                time.sleep(2)
+            except Exception as e:
+                logger.exception(f"Unexpected error in TCP loop: {e}")
+                time.sleep(2)
+
+    def _process_message(self, ws: Connection, message: str):
         jmsg = json.loads(message)
         if jmsg.get("type") == "hello":
             # Parse hello message to extract model info if needed
@@ -214,7 +258,7 @@ class VideoImageClassification:
             # Leave logging for unknown message types for debugging purposes
             logger.warning(f"Unknown message type: {jmsg.get('type')}")
 
-    def _execute_handler(self, classification: str, classifications: dict = None):
+    def _execute_handler(self, classification: str, classifications: dict | None = None):
         """Execute the handler for the detected object if it exists.
 
         Args:
@@ -247,7 +291,7 @@ class VideoImageClassification:
         with connect(self._uri) as ws:
             self._override_threshold(ws, value)
 
-    def _override_threshold(self, ws: ClientConnection, value: float):
+    def _override_threshold(self, ws: Connection, value: float):
         """Override the threshold for image classification model.
 
         Args:
