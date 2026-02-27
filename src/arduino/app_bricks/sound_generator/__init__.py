@@ -10,6 +10,7 @@ import numpy as np
 import time
 from pathlib import Path
 from collections import OrderedDict
+from queue import Queue, Empty
 
 from .generator import WaveSamplesBuilder
 from .effects import *
@@ -44,7 +45,8 @@ class LRUDict(OrderedDict):
 
 @brick
 class SoundGeneratorStreamer:
-    SAMPLE_RATE = 16000
+    # Default sample rate fallback; prefer using the `Speaker` constants when possible.
+    SAMPLE_RATE = Speaker.RATE_16K
     A4_FREQUENCY = 440.0
 
     # Semitone mapping for the 12 notes (0 = C, 11 = B).
@@ -105,7 +107,9 @@ class SoundGeneratorStreamer:
         """
 
         self._cfg_lock = threading.Lock()
-        self._init_wave_generator(wave_form)
+        # instance sample rate. Prefer speaker defaults but allow re-init later
+        self._sample_rate = int(self.SAMPLE_RATE)
+        self._init_wave_generator(wave_form, sample_rate=self._sample_rate)
 
         self._bpm = bpm
         self.time_signature = time_signature
@@ -125,9 +129,17 @@ class SoundGeneratorStreamer:
     def stop(self):
         pass
 
-    def _init_wave_generator(self, wave_form: str):
+    def _init_wave_generator(self, wave_form: str, sample_rate: int | None = None):
+        """Initialize the WaveSamplesBuilder with the given sample rate.
+
+        If `sample_rate` is None, uses `self._sample_rate` or falls back to `Speaker.RATE_16K`.
+        This allows the SoundGenerator subclass to reinitialize the generator after
+        creating the actual output `Speaker` so both sides agree on sample rate.
+        """
         with self._cfg_lock:
-            self._wave_gen = WaveSamplesBuilder(sample_rate=self.SAMPLE_RATE, wave_form=wave_form)
+            sr = int(sample_rate) if sample_rate is not None else getattr(self, "_sample_rate", Speaker.RATE_16K)
+            self._wave_gen = WaveSamplesBuilder(sample_rate=sr, wave_form=wave_form)
+            self._sample_rate = int(sr)
 
     def set_wave_form(self, wave_form: str):
         """
@@ -407,12 +419,27 @@ class SoundGeneratorStreamer:
         duration = self._note_duration(note_duration)
         frequency = self._get_note(note)
         logger.debug(f"play: note={note}, note_duration={note_duration}, duration={duration}s, frequency={frequency}Hz, volume={volume}")
+
+        # Treat REST (mapped to frequency == 0.0) as explicit silence:
+        # return a zero-filled float32 buffer for the requested duration so that
+        # the playback loop can enqueue it and maintain proper timing.
+        if frequency is not None and float(frequency) == 0.0:
+            sample_rate = getattr(self._wave_gen, "sample_rate", getattr(self, "_sample_rate", Speaker.RATE_16K))
+            frames = int(duration * float(sample_rate))
+            silent = np.zeros(frames, dtype=np.float32)
+            silent = self._apply_sound_effects(silent, float(frequency))
+            logger.debug(f"  Generated silence: {len(silent)} samples (expected {frames} @ {sample_rate}Hz, duration={duration}s)")
+            return silent
+
         if frequency is not None and frequency >= 0.0:
             if volume is None:
                 volume = self._master_volume
             data = self._wave_gen.generate_block(float(frequency), duration, volume)
             data = self._apply_sound_effects(data, frequency)
-            logger.debug(f"  Generated audio: {len(data)} samples")
+            # diagnostic: log expected frames and actual length
+            gen_sr = getattr(self._wave_gen, "sample_rate", getattr(self, "_sample_rate", Speaker.RATE_16K))
+            expected_frames = int(duration * float(gen_sr))
+            logger.debug(f"  Generated audio: {len(data)} samples (expected {expected_frames} @ {gen_sr}Hz, duration={duration}s)")
             return data
 
     def play_tone(self, note: str, duration: float = 0.25, volume: float = None) -> bytes:
@@ -523,10 +550,21 @@ class SoundGenerator(SoundGeneratorStreamer):
             # Configure buffer size and queue for very responsive stop operations
             # Use 62.5ms periods (1000 frames @ 16kHz) for quick response to stop commands
             # Very small queue (maxsize=3) = ~190ms total buffer for ultra-responsive stop
-            self._output_device = Speaker(sample_rate=Speaker.RATE_48K, format=np.float32, buffer_size=Speaker.BUFFER_SIZE_REALTIME, shared=False)
+            # Request 16 kHz to keep block sizes small and reduce CPU load.
+            self._output_device = Speaker(sample_rate=Speaker.RATE_16K, format=np.float32, buffer_size=Speaker.BUFFER_SIZE_REALTIME, shared=False)
         else:
             self.external_speaker = True
             self._output_device = output_device
+
+        # Ensure wave generator sample rate matches the actual output device
+        try:
+            dev_sr = int(getattr(self._output_device, "sample_rate", None))
+            if dev_sr:
+                self._sample_rate = dev_sr
+                self._init_wave_generator(wave_form, sample_rate=dev_sr)
+        except Exception:
+            # keep whatever sample rate was already configured
+            pass
 
         # Step sequencer state
         self._sequence_thread = None
@@ -539,6 +577,28 @@ class SoundGenerator(SoundGeneratorStreamer):
             return
         if not self.external_speaker:
             self._output_device.start()
+        # After starting the device, query its actual sample rate and
+        # reinitialize the wave generator to match the device. This avoids
+        # mismatches where the requested sample rate is adapted by the ALSA
+        # driver and the generator would otherwise produce buffers with the
+        # wrong number of samples (leading to drift).
+        try:
+            actual_sr = int(getattr(self._output_device, "sample_rate", 0))
+            if actual_sr and getattr(self, "_sample_rate", None) != actual_sr:
+                self._sample_rate = actual_sr
+                # preserve current wave form if available
+                current_wf = getattr(getattr(self, "_wave_gen", None), "wave_form", None)
+                if current_wf is None:
+                    current_wf = "sine"
+                self._init_wave_generator(current_wf, sample_rate=actual_sr)
+                logger.debug(f"SoundGenerator.start: reinitialized wave_gen to sample_rate={actual_sr}")
+            else:
+                logger.debug(
+                    f"SoundGenerator.start: device sample_rate={actual_sr}, generator sample_rate={getattr(self._wave_gen, 'sample_rate', None)}"
+                )
+        except Exception:
+            pass
+
         self._started.set()
 
     def stop(self):
@@ -731,6 +791,7 @@ class SoundGenerator(SoundGeneratorStreamer):
         on_step_callback: callable = None,
         on_complete_callback: callable = None,
         volume: float = None,
+        lookahead: int = 4,
     ):
         """
         Play a step sequence with automatic timing, pre-buffering, and lookahead.
@@ -749,6 +810,7 @@ class SoundGenerator(SoundGeneratorStreamer):
             on_complete_callback (callable, optional): Callback function called when sequence completes (only if loop=False).
                 Signature: on_complete_callback()
             volume (float, optional): Volume level (0.0 to 1.0). If None, uses master volume.
+            lookahead (int): Number of steps to pre-buffer ahead of the current step. Higher values can reduce risk of underruns but increase latency.
 
         Returns:
             None: Returns immediately after starting playback thread.
@@ -762,7 +824,7 @@ class SoundGenerator(SoundGeneratorStreamer):
                 [],  # Step 2: REST
                 ["C5"],  # Step 3: High note
             ]
-            sound_gen.play_step_sequence(sequence, note_duration=1 / , bpm=120)
+            sound_gen.play_step_sequence(sequence, note_duration=1 / 16, bpm=120)
             ```
         """
         # Stop any existing sequence
@@ -783,7 +845,7 @@ class SoundGenerator(SoundGeneratorStreamer):
         session_id = self._playback_session_id
         self._sequence_thread = threading.Thread(
             target=self._playback_sequence_thread,
-            args=(sequence, note_duration, bpm, loop, on_step_callback, on_complete_callback, volume, session_id),
+            args=(sequence, note_duration, bpm, loop, on_step_callback, on_complete_callback, volume, session_id, lookahead),
             daemon=True,
             name="SoundGen-StepSeq",
         )
@@ -805,7 +867,16 @@ class SoundGenerator(SoundGeneratorStreamer):
                 self._sequence_stop_event.set()
                 # Clear reference immediately - thread will clean itself up
                 self._sequence_thread = None
-                self._output_device.clear()
+                # Flush device playback queue using the speaker API
+                try:
+                    # Prefer using the speaker's clear_playback_queue implementation
+                    self._output_device.clear_playback_queue()
+                except Exception:
+                    # As a last resort, call our helper that exists on this brick
+                    try:
+                        self.clear_playback_queue()
+                    except Exception:
+                        logger.warning("Could not clear playback queue on output device")
             else:
                 logger.warning("stop_sequence called but no active sequence thread")
 
@@ -829,59 +900,145 @@ class SoundGenerator(SoundGeneratorStreamer):
         on_complete_callback: callable,
         volume: float,
         session_id: int,
+        lookahead: int,
     ):
-        """Internal thread for step sequence playback.
-
-        Simple approach: generate step-by-step. Callbacks are emitted immediately after
-        queuing each step, ensuring perfect sync with audio playback.
-        """
+        """Internal thread for step sequence playback with lookahead."""
         from itertools import cycle
 
         try:
             duration = self._note_duration(note_duration)
             total_steps = len(sequence)
 
-            logger.info(f"Starting sequence: {total_steps} steps at {bpm} BPM")
+            logger.info(f"Starting sequence: {total_steps} steps at {bpm} BPM (lookahead={lookahead})")
 
-            # PRE-FILL: Queue one period of silence to prevent first-note underrun
-            # This gives ALSA something to consume while we generate the first real note
+            # Producer queue holds (session_id, step_index, notes)
+            gen_q: "Queue[tuple[int, int, list[str]]]" = Queue(maxsize=max(8, lookahead * 2))
+
+            # Producer thread: generates audio blocks and calls output_device.play()
+            def producer_thread():
+                try:
+                    while True:
+                        try:
+                            item = gen_q.get(timeout=0.1)
+                        except Empty:
+                            if self._sequence_stop_event.is_set():
+                                break
+                            continue
+
+                        if item is None:
+                            break
+
+                        item_session, item_step, item_notes = item
+                        # Ignore stale jobs from previous sessions
+                        if item_session != session_id:
+                            gen_q.task_done()
+                            continue
+
+                        try:
+                            if item_notes and len(item_notes) > 0:
+                                if len(item_notes) == 1:
+                                    data = super(SoundGenerator, self).play(item_notes[0], note_duration, volume)
+                                else:
+                                    data = super(SoundGenerator, self).play_chord(item_notes, note_duration, volume)
+                            else:
+                                data = super(SoundGenerator, self).play("REST", note_duration, volume)
+
+                            if data is not None:
+                                self._output_device.play(data)
+                        except Exception as e:
+                            logger.error(f"Producer error generating/playing step {item_step}: {e}", exc_info=True)
+                        finally:
+                            gen_q.task_done()
+                finally:
+                    # Drain remaining items quickly
+                    while not gen_q.empty():
+                        try:
+                            gen_q.get_nowait()
+                            gen_q.task_done()
+                        except Exception:
+                            break
+
+            producer = threading.Thread(target=producer_thread, name="SoundGen-Producer", daemon=True)
+            producer.start()
+
+            # Pre-fill one period of silence to avoid initial underrun
             silence_frames = int(duration * self._output_device.sample_rate)
             silence = np.zeros(silence_frames, dtype=np.float32)
             self._output_device.play(silence)
-            logger.debug(f"Pre-filled queue with {len(silence)} bytes of silence")
+            logger.debug(f"Pre-filled queue with {len(silence)} samples of silence")
 
-            # Create infinite iterator if looping, otherwise single pass
+            # Pre-generate initial lookahead steps (enqueue jobs)
+            for i in range(0, lookahead):
+                idx = i if i < total_steps else None
+                if idx is None:
+                    break
+                try:
+                    gen_q.put_nowait((session_id, idx, sequence[idx]))
+                except Exception:
+                    # If queue is full, producer will catch up; continue
+                    break
+
+            # Create iterator for main playback (consumes logical steps)
             step_iterator = cycle(enumerate(sequence)) if loop else enumerate(sequence)
 
+            step_count = 0
             for step_index, notes in step_iterator:
-                # Check for stop signal
+                step_start = time.monotonic()
+                # Stop if requested
                 if self._sequence_stop_event.is_set():
                     logger.debug(f"Sequence stopped at step {step_index}")
                     break
 
-                # Generate audio for this step
-                if notes and len(notes) > 0:
-                    if len(notes) == 1:
-                        data = super(SoundGenerator, self).play(notes[0], note_duration, volume)
-                    else:
-                        data = super(SoundGenerator, self).play_chord(notes, note_duration, volume)
+                # Enqueue generation job for the step that will be `lookahead` ahead
+                target_index = step_index + lookahead
+                if loop:
+                    target_index = target_index % total_steps
+                    target_notes = sequence[target_index]
+                    try:
+                        gen_q.put((session_id, target_index, target_notes), timeout=0.01)
+                    except Exception:
+                        # producer is busy; it's ok, it will catch up
+                        pass
                 else:
-                    # REST: silence
-                    data = super(SoundGenerator, self).play("REST", note_duration, volume)
+                    if target_index < total_steps:
+                        try:
+                            gen_q.put((session_id, target_index, sequence[target_index]), timeout=0.01)
+                        except Exception:
+                            pass
 
-                # Queue audio - BLOCKS until there's space (natural sync with ALSA!)
-                if data.any():
-                    self._output_device.play(data)
-
-                # Emit callback IMMEDIATELY after queuing
-                # This is synchronized with actual playback timing via blocking
+                # Emit callback indicating this step is now playing
                 if on_step_callback:
                     try:
                         on_step_callback(step_index, total_steps)
                     except Exception as e:
                         logger.error(f"Error in step callback: {e}")
 
+                # Wait until the next step time, unless stopped
+                elapsed = time.monotonic() - step_start
+                remaining = duration - elapsed
+                if remaining > 0.0:
+                    wait_start = time.monotonic()
+                    while True:
+                        if self._sequence_stop_event.is_set():
+                            break
+                        elapsed_wait = time.monotonic() - wait_start
+                        if elapsed_wait >= remaining:
+                            break
+                        time.sleep(min(0.01, remaining - elapsed_wait))
+
+                # If not looping, stop after one pass
+                step_count += 1
+                if not loop and step_count >= total_steps:
+                    break
+
             logger.info("Sequence playback ended")
+
+            # Signal producer to exit and wait for it
+            try:
+                gen_q.put(None, timeout=0.1)
+            except Exception:
+                pass
+            producer.join(timeout=1.0)
 
             # Call completion callback if provided and not looping
             if not loop and on_complete_callback:
