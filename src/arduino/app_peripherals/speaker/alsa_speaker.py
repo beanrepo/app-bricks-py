@@ -407,6 +407,41 @@ class ALSASpeaker(BaseSpeaker):
             logger.debug(f"Error checking device status: {e}")
             return True  # Assume disconnected if we can't check
 
+        def clear_playback_queue(self) -> None:
+            """Attempt to drop any queued audio in the ALSA PCM device.
+
+            Uses PCM.drop() when available, falls back to PCM.drain() or a soft reset.
+            """
+            try:
+                if self._pcm is None:
+                    return
+                # Prefer drop (discard all pending frames)
+                if hasattr(self._pcm, "drop"):
+                    try:
+                        self._pcm.drop()
+                        return
+                    except Exception:
+                        pass
+
+                # Fallback to drain (waits until all pending frames have been played)
+                if hasattr(self._pcm, "drain"):
+                    try:
+                        self._pcm.drain()
+                        return
+                    except Exception:
+                        pass
+
+                # As a last resort, close and reopen the PCM to flush the queue
+                try:
+                    self._close_speaker()
+                    time.sleep(0.01)
+                    self._open_speaker()
+                except Exception as e:
+                    logger.warning(f"Failed to reset PCM while clearing playback queue: {e}")
+
+            except Exception as e:
+                logger.warning(f"Error clearing playback queue: {e}")
+
 
 def _dtype_to_alsa_format_name(dtype: np.dtype, is_packed: bool = False) -> str:
     """

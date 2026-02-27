@@ -431,6 +431,21 @@ class BaseSpeaker(ABC):
         """Write a single audio chunk to the speaker. Must be implemented by subclasses."""
         pass
 
+    def clear_playback_queue(self) -> None:
+        """Clear any queued audio in the playback device so subsequent writes start fresh.
+
+        Default no-op implementation. Subclasses that can flush device queues
+        (e.g. ALSA via PCM.drop/drain) should override this for efficient
+        immediate clearing. Providing a default prevents instantiation errors
+        for older subclass implementations that do not yet implement this API.
+        """
+        try:
+            # Default behaviour: nothing to do at base class level.
+            # Concrete implementations (ALSASpeaker) should override.
+            return
+        except Exception:
+            return
+
     def _set_status(self, new_status: Literal["disconnected", "connected"], data: dict | None = None) -> None:
         """
         Updates the current status of the speaker and invokes the registered status
