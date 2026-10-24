@@ -1,6 +1,6 @@
 id: arduino:time_series_forecast
 name: Time Series Forecast
-description: |
+description: >-
   Zero-shot probabilistic forecasting of sensor time series with the Timestral foundation models by Mistral AI.
   Given the past values of a regularly sampled signal, the brick predicts the next steps as quantiles,
   each forecast coming with its uncertainty, without any training. The model runs on the CPU, so the
