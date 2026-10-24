@@ -276,6 +276,9 @@ stream = [
 telegram-bot = [
     { name = "python-telegram-bot" },
 ]
+time-series-forecast = [
+    { name = "numpy" },
+]
 web-ui = [
     { name = "cryptography" },
     { name = "fastapi" },
@@ -305,6 +308,7 @@ requires-dist = [
     { name = "arduino-app-bricks", extras = ["stream"], marker = "extra == 'all'" },
     { name = "arduino-app-bricks", extras = ["streamlit-ui"], marker = "extra == 'all'" },
     { name = "arduino-app-bricks", extras = ["telegram-bot"], marker = "extra == 'all'" },
+    { name = "arduino-app-bricks", extras = ["time-series-forecast"], marker = "extra == 'all'" },
     { name = "arduino-app-bricks", extras = ["web-ui"], marker = "extra == 'all'" },
     { name = "arduino-router-bridge", specifier = ">=0.5.1" },
     { name = "cryptography", marker = "extra == 'web-ui'" },
@@ -328,6 +332,7 @@ requires-dist = [
     { name = "numpy", marker = "extra == 'microphone'" },
     { name = "numpy", marker = "extra == 'ocr'" },
     { name = "numpy", marker = "extra == 'pose-estimation'" },
+    { name = "numpy", marker = "extra == 'time-series-forecast'" },
     { name = "opencv-python-headless", marker = "extra == 'camera'", specifier = ">=4.13,<4.14" },
     { name = "opencv-python-headless", marker = "extra == 'ocr'", specifier = ">=4.13,<4.14" },
     { name = "paho-mqtt", marker = "extra == 'mqtt'", specifier = ">=2.1.0" },
@@ -349,7 +354,7 @@ requires-dist = [
     { name = "websockets", marker = "extra == 'pose-estimation'" },
     { name = "websockets", marker = "extra == 'stream'" },
 ]
-provides-extras = ["dev", "dbstorage-influx", "mqtt", "folderwatcher", "camera", "microphone", "web-ui", "streamlit-ui", "mood-detector", "pose-estimation", "ocr", "stream", "telegram-bot", "cloud-llm", "mcp-client", "cloud-asr", "all"]
+provides-extras = ["dev", "dbstorage-influx", "mqtt", "folderwatcher", "camera", "microphone", "web-ui", "streamlit-ui", "mood-detector", "pose-estimation", "ocr", "stream", "time-series-forecast", "telegram-bot", "cloud-llm", "mcp-client", "cloud-asr", "all"]
 
 [package.metadata.requires-dev]
 build = [{ name = "docstring-parser", specifier = ">=0.16" }]

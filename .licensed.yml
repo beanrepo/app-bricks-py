@@ -88,6 +88,15 @@ apps:
     venv:
       project: containers/ai/llamacpp-npu-runner
 
+  - name: timestral-runner
+    source_path: .
+    sources:
+      pip: true
+    python:
+      virtual_env_dir: "/venvs/timestral-runner"
+    venv:
+      project: containers/ai/timestral-runner
+
 stale_records_action: error
 
 ignored:

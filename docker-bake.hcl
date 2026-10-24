@@ -139,6 +139,7 @@ group "default" {
     "tps",
     "aihub-onnx-models-runner",
     "ocr-runner",
+    "timestral-runner",
     "qairt-common-base",
     "aihub-litert-models-runner",
     "gesture-recognition-runner",
@@ -237,6 +238,15 @@ target "ocr-runner" {
   cache-from = cache_from("ocr-runner")
   cache-to   = cache_to("ocr-runner")
   contexts   = parent_context("aihub-onnx-models-runner")
+}
+
+target "timestral-runner" {
+  inherits   = ["_downstream"]
+  context    = "containers/ai/timestral-runner"
+  tags       = image_tags("timestral-runner")
+  cache-from = cache_from("timestral-runner")
+  cache-to   = cache_to("timestral-runner")
+  contexts   = parent_context("python-slim")
 }
 
 target "qairt-common-base" {

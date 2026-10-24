@@ -84,6 +84,9 @@ ocr = [
 stream = [
     "websockets",
 ]
+time_series_forecast = [
+    "numpy",
+]
 
 telegram_bot = [
     "python-telegram-bot>=21.1",
@@ -115,6 +118,7 @@ all = [
     "arduino_app_bricks[pose_estimation]",
     "arduino_app_bricks[ocr]",
     "arduino_app_bricks[stream]",
+    "arduino_app_bricks[time_series_forecast]",
     "arduino_app_bricks[telegram_bot]",
     "arduino_app_bricks[cloud_llm]",
     "arduino_app_bricks[cloud_asr]",

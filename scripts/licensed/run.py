@@ -86,12 +86,27 @@ def build_venv(app):
     shutil.rmtree(venv_dir, ignore_errors=True)
     # The seed gives the venv the pip licensed reads package metadata with
     subprocess.run(["uv", "venv", "-q", "--seed", str(venv_dir)], check=True)
-    export = ["uv", "export", "--frozen", "--no-dev", "--no-emit-project", "--project", str(project_dir(app))]
+    # The index URLs are emitted for the containers that pin a package to another index (torch on the PyTorch CPU one)
+    export = ["uv", "export", "--frozen", "--no-dev", "--no-emit-project", "--emit-index-url", "--project", str(project_dir(app))]
     export += [f"--extra={extra}" for extra in app["venv"].get("extras", [])]
     requirements = subprocess.run(export, check=True, capture_output=True, text=True).stdout
     # The export is the whole locked closure: --no-deps installs exactly it, as the images that
     # override dependencies out of their lock do (see aihub-onnx-models-runner)
-    install = ["uv", "pip", "install", "-q", "--python", str(venv_dir / "bin/python"), "--no-deps", "--require-hashes", "-r", "-"]
+    # Every artifact is hash checked, so taking the best match across the indexes is safe
+    install = [
+        "uv",
+        "pip",
+        "install",
+        "-q",
+        "--python",
+        str(venv_dir / "bin/python"),
+        "--no-deps",
+        "--require-hashes",
+        "--index-strategy",
+        "unsafe-best-match",
+        "-r",
+        "-",
+    ]
     subprocess.run(install, input=requirements, check=True, text=True)
     for entry in venv_dir.glob("lib/python*/site-packages/*"):
         if entry.name not in KEEP_IN_SITE_PACKAGES and not entry.name.endswith(".dist-info"):

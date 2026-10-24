@@ -1,0 +1,31 @@
+# TIMESTRAL_MODEL = Hugging Face repository id of the checkpoint
+# TIMESTRAL_THREADS = CPU threads of the inference
+# TIMESTRAL_MODELS_PATH = host directory holding the downloaded checkpoints
+services:
+  timestral-runner:
+    image: ${DOCKER_REGISTRY_BASE:-ghcr.io/arduino/}app-bricks/timestral-runner:__BRICKS_RELEASE_VERSION__
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "2"
+    ports:
+      - ${BIND_ADDRESS:-127.0.0.1}:1345:1345
+      - ${BIND_ADDRESS_IPV6:-[::1]}:1345:1345
+    environment:
+      - TIMESTRAL_MODEL=${TIMESTRAL_MODEL:-mistralai/Timestral-5M}
+      - TIMESTRAL_THREADS=${TIMESTRAL_THREADS:-4}
+      - OMP_NUM_THREADS=${TIMESTRAL_THREADS:-4}
+    mem_limit: 1500m
+    memswap_limit: 1500m
+    volumes:
+      # The Hugging Face Hub cache: a checkpoint is downloaded once and shared by every app
+      - "${TIMESTRAL_MODELS_PATH:-/home/arduino/.arduino-bricks/timestral}:/models"
+    healthcheck:
+      # Ready once the model is loaded: the start period covers the download of the first start
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:1345/ready', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 900s
+      start_interval: 5s

@@ -1,0 +1,24 @@
+id: arduino:time_series_forecast
+name: Time Series Forecast
+description: |
+  Zero-shot probabilistic forecasting of sensor time series with the Timestral foundation models by Mistral AI.
+  Given the past values of a regularly sampled signal, the brick predicts the next steps as quantiles,
+  each forecast coming with its uncertainty, without any training. The model runs on the CPU, so the
+  brick works on every board.
+category: ai
+supported_boards: ["unoq", "ventunoq"]
+variables:
+- name: TIMESTRAL_MODEL
+  description: "Timestral checkpoint, a Hugging Face repository id: mistralai/Timestral-5M or mistralai/Timestral-28M"
+  default_value: mistralai/Timestral-5M
+- name: TIMESTRAL_THREADS
+  description: CPU threads the runner uses for inference
+  default_value: 4
+- name: TIMESTRAL_MODELS_PATH
+  description: Host directory the checkpoints are downloaded to, shared by every app
+  hidden: true
+  default_value: /home/arduino/.arduino-bricks/timestral
+- name: BIND_ADDRESS
+  description: Bind address
+  hidden: true
+  default_value: 127.0.0.1
